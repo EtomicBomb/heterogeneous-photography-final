@@ -1,0 +1,25 @@
+# Old strategy
+1. Detect and extract features (ORB or SIFT)
+2. Matched features between images
+3. Found patches around the matches
+4. Used those patches to estimate an exposure correction for each pixel (least squares)
+5. Took mode (bin) of the least squares parameters
+6. Used that exposure correction on whole image
+
+# New strategy
+*. Detect and extract features (ORB or SIFT)
+*. Matched features between images
+3. Estimate projective transform
+4. Sample shared pixels from projective transform
+5. Use those samples to estimate tempurature, tint, and lightness transforms
+6. Transform the image using those transforms
+
+# Project proposal
+Embed GPU program in python bindings
+Steps 1-3 are in a calibration procedure
+Steps 4-6 of New strategy done on GPU
+
+# Next steps
+- working prototype of New strategy
+- write proposal
+- implement it
