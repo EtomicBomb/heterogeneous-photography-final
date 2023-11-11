@@ -39,12 +39,9 @@ def naive_search(source, texture):
         result = np.argmin(result)
         print(result)
         fig, ax = plt.subplots(1, 2)
-        ax[0].imshow(source_block, cmap='jet')
-        ax[1].imshow(texture[result], cmap='jet')
+        ax[0].imshow(source_block)a
+        ax[1].imshow(texture[result])
         plt.show()
-
-
-
 
 naive_search(img1, img2)
 sys.exit(0)
