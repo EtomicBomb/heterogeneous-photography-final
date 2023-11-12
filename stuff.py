@@ -23,6 +23,7 @@ def corresponding_coordinates(left, right):
                             residual_threshold=1, 
                             max_trials=5000,
                             random_state=np.random.default_rng(seed=9))
+
     rows, cols, _ = np.shape(left)
     coords_left = np.reshape(np.mgrid[:rows, :cols], (2, -1))
     ones = np.ones((1, rows * cols))
@@ -34,6 +35,15 @@ def corresponding_coordinates(left, right):
     to_delete = np.any(to_delete, axis=0)
     coords_left = np.delete(coords_left, to_delete, axis=1)
     coords_right = np.delete(coords_right, to_delete, axis=1)
+
+#     fig, ax = plt.subplots(1, 3)
+#     ax[0].imshow(left)
+#     ax[1].imshow(right)
+#     right_copy = np.array(right)
+#     right_copy[coords_right[0], coords_right[1], :] = [255, 0, 0]
+#     ax[2].imshow(right_copy)
+#     plt.show()
+
     return coords_left, coords_right
 
 def estimate_model(left, right, coords_left, coords_right):
@@ -41,14 +51,19 @@ def estimate_model(left, right, coords_left, coords_right):
     colors_left = color.rgb2lab(colors_left)
     colors_right = right[coords_right[0], coords_right[1], :]
     colors_right = color.rgb2lab(colors_right)
+    to_delete = np.any((colors_left[:,0] < 10, colors_left[:,0] > 90, colors_right[:,0] < 10, colors_right[:,0] > 90), axis=0)
+    print('filtering', np.sum(to_delete), 'elements to do over- or under-exposure')
+    colors_left = np.delete(colors_left, to_delete, axis=0)
+    colors_right = np.delete(colors_right, to_delete, axis=0)
 
     new_left = []
     left_lab = color.rgb2lab(left)
     for left_lab, channel_left, channel_right in zip(np.moveaxis(left_lab, -1, 0), np.transpose(colors_left), np.transpose(colors_right)):
+        print(channel_left.shape, channel_right.shape)
         model, inliers = ransac(np.column_stack((channel_left, channel_right)),
                         measure.LineModelND, 
                         min_samples=8,
-                        residual_threshold=0.00003, 
+                        residual_threshold=0.003, 
                         max_trials=500,
                         random_state=np.random.default_rng(seed=9))
         print(len(inliers))
