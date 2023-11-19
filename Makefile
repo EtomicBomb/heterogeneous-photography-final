@@ -1,8 +1,6 @@
 ccflags = -g -Ofast --shared -fPIC -Wall
 nvccflags = -arch=sm_60 -g -O3 --shared -Xcompiler -fPIC -Xcompiler -Wall
 
-all: target/cpu.so target/gpu.so
-
 run-cpu: target/cpu.so
 	SHARED_OBJECT_PATH=$< python3 src/main.py
 
@@ -18,5 +16,5 @@ target/gpu.so: src/gpu.cu
 clean:
 	rm -f target/*
 
-.PHONY: all run-cpu run-gpu clean
+.PHONY: run-cpu run-gpu clean
 
