@@ -1,181 +1,315 @@
 import sys
+from dataclasses import dataclass
 import numpy as np
 import scipy
 import matplotlib.pyplot as plt
 from matplotlib import animation, widgets
-from skimage import data, transform, util, io, color, measure, feature, registration
+from matplotlib import image as pli
+from skimage import data, transform, util, color, measure, feature, registration
 import cv2
 import imageio.v3 as iio
+import io
+import time
 
 import bindings
 
-def corresponding_coordinates(left, right):
-    left_gray = color.rgb2gray(left)
-    right_gray = color.rgb2gray(right)
+# 2 matrices of floats (images)
+def foo(src, dst):
+    src = iio.imread('inputs/a.jpg')
+    dst = iio.imread('inputs/b.jpg')
 
-    extractor_left = feature.SIFT()
-    extractor_left.detect_and_extract(left_gray)
-    extractor_right = feature.SIFT()
-    extractor_right.detect_and_extract(right_gray)
+    src = util.img_as_float32(src)
+    dst = util.img_as_float32(dst)
 
-    matches = feature.match_descriptors(extractor_left.descriptors, extractor_right.descriptors, cross_check=True)
-    model, inliers = measure.ransac((extractor_left.keypoints[matches[:, 0]], extractor_right.keypoints[matches[:, 1]]),
+    src_gray = color.rgb2gray(src)
+    dst_gray = color.rgb2gray(dst)
+
+    extractor_src = feature.SIFT()
+    extractor_src.detect_and_extract(src_gray)
+    extractor_dst = feature.SIFT()
+    extractor_dst.detect_and_extract(dst_gray)
+
+    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True)
+    essential, inliers = measure.ransac((extractor_src.keypoints[matches[:, 0]], extractor_dst.keypoints[matches[:, 1]]),
+                            transform.EssentialMatrixTransform, 
+                            min_samples=8,
+                            residual_threshold=1, 
+                            max_trials=5000,
+                            random_state=np.random.default_rng(seed=9))
+
+    src_norm = src_gray - np.mean(src_gray)
+    dst_norm = dst_gray - np.mean(dst_gray)
+
+    rows, cols, _ = src.shape
+    row, col = 15, 30
+    x = [row, col, 1]
+    x = np.reshape(x, (3, 1))
+    ex = essential.params @ x
+
+    src_patch = src_norm[row-10:row+10, col-10:col+10]
+
+    rows, cols, _ = dst.shape
+    indices = np.mgrid[:rows, :cols]
+    indices = np.concatenate((indices, np.ones((1, rows, cols))), axis=0)
+    weights = np.expand_dims(ex, 2) * indices
+    weights = np.sum(weights, axis=0)
+    sigma = 0.04
+    weights = np.exp(-np.square(weights) / (2 * np.square(sigma)))
+    
+    correlation = scipy.signal.correlate2d(dst_norm, src_patch, mode='same')
+    print(correlation.shape)
+
+    print(weights.shape, correlation.shape, dst.shape)
+
+    # x'Ex = 0 => x' [l1, l2, l3] = 0 => l1 x1 + l2 y1 + l3 = 0
+    xs = np.arange(cols)
+    l1, l2, l3 = ex
+    ys = (-l3 - l1*xs)/l2
+    valid = np.logical_and(ys >= 0, ys < rows)
+    xs = np.int_(xs[valid])
+    ys = np.int_(ys[valid])
+    print(xs)
+    print(ys)
+
+    dst[ys, xs, :] = [255, 0, 0]
+    fig, ax = plt.subplots(1, 5)
+    ax[0].imshow(src)
+    ax[1].imshow(dst)
+    ax[2].imshow(weights)
+    ax[3].imshow(correlation)
+    ax[4].imshow(weights * correlation)
+
+    plt.show()
+
+
+def estimate_model(src, dst, coords_src, coords_dst):
+    colors_src = src[coords_src[0], coords_src[1], :]
+    colors_src = color.rgb2lab(colors_src)
+    colors_dst = dst[coords_dst[0], coords_dst[1], :]
+    colors_dst = color.rgb2lab(colors_dst)
+    valid = np.all((colors_src[:,0] > 10, colors_src[:,0] < 90, colors_dst[:,0] > 10, colors_dst[:,0] < 90), axis=0)
+    colors_src = colors_src[valid, :]
+    colors_dst = colors_dst[valid, :]
+    new_src = []
+    src_lab = color.rgb2lab(src)
+    for src_lab, channel_src, channel_dst in zip(np.moveaxis(src_lab, -1, 0), np.transpose(colors_src), np.transpose(colors_dst)):
+        result = scipy.stats.linregress(channel_src, channel_dst)
+        new_src.append(src_lab * result.slope + result.intercept)
+    new_src = np.moveaxis(new_src, 0, -1)
+    new_src = color.lab2rgb(new_src)
+    return new_src
+
+class LinearModel:
+    def estimate(self, xs, ys, weights):
+        total_weight = np.sum(weights)
+        xs = xs * weights
+        ys = ys * weights
+        sx = np.sum(xs)
+        sy = np.sum(ys)
+        sxx = np.sum(np.square(xs))
+        sxy = np.sum(xs * ys)
+        slope_numer = total_weight * sxy - sx * sy
+        slope_denom = total_weight * sxx - sx * sx
+        self.slope = slope_numer / slope_denom
+        self.intercept = (y - self.slope * x) / total_weight
+    def residuals(self, xs, ys):
+        ys_expected = self.slope * xs + self.intercept
+        return np.sqrt(np.sum(np.square(ys_expected - ys), axis=1))
+    def apply(self, xs):
+        return self.slope * xs + self.intercept
+
+@dataclass
+class BinModel:
+    data_min: float
+    data_max: float
+    bin_count: int
+    def estimate(self, xs, ys, weights):
+        xs_binned = self._bin(xs)
+        self.bins = np.zeros((self.bin_count,))
+        np.add.at(self.bins, xs_binned, ys * weights)
+        bin_counts = np.zeros((bin_count,))
+        np.add.at(bin_counts, xs_binned, weights)
+        self.bins = np.where(bin_counts, self.bins / bin_counts, 0) # TODO: better choice here
+    def residuals(self, xs, ys):
+        ys_expected = self.apply(xs)
+        return np.sqrt(np.sum(np.square(ys_expected - ys), axis=1))
+    def apply(self, xs):
+        return self.bins[self._bin(xs)]
+    def _bin(self, xs):
+        data_bins = (xs - self.data_min) / (self.data_max - self.data_min)
+        data_bins = np.int_(data_bins * self.bin_count)
+        data_bins = np.clip(data_bins, 0, self.bin_count - 1)
+        return data_bins
+
+def stream_from_file():
+    src_stream = iio.imread('inputs/src-small.mp4')
+    dst_stream = iio.imread('inputs/dst-small.mp4')
+    while True:
+        for src, dst in zip(src_stream, dst_stream):
+            yield src, dst
+
+def stream_two_camera():
+    src = iio.imiter('<video0>', size='320x180')
+    dst = iio.imiter('<video2>', size='320x180')
+    for src, dst in zip(src, dst):
+        yield src, dst
+
+def stream_dummy():
+    def recompress(frame):
+        out = io.BytesIO()
+        iio.imwrite(out, frame, extension='.jpeg')
+        return iio.imread(out, extension='.jpeg')
+    def split_thirds(frame):
+        _, cols, _ = np.shape(frame)
+        split1 = cols // 3
+        split2 = 2 * cols // 3
+        src = frame[::1, :split2:1, :]
+        dst = frame[::1, split1::1, :]
+        return src, dst
+    rng = np.random.default_rng()
+    for frame in iio.imiter('<video0>', size='320x180'):
+        frame = util.img_as_float32(frame)
+        src, dst = split_thirds(frame)
+        dst = dst * 0.5
+        noise_scale = 0.03
+        src = src + rng.normal(scale=noise_scale, size=np.shape(src))
+        dst = dst + rng.normal(scale=noise_scale, size=np.shape(dst))
+        src = util.img_as_float32(recompress(util.img_as_ubyte(np.clip(src, 0, 1))))
+        dst = util.img_as_float32(recompress(util.img_as_ubyte(np.clip(dst, 0, 1))))
+        yield src, dst
+
+def corresponding_coordinates(src, dst):
+    src_gray = color.rgb2gray(src)
+    dst_gray = color.rgb2gray(dst)
+
+    extractor_src = feature.SIFT()
+    extractor_src.detect_and_extract(src_gray)
+    extractor_dst = feature.SIFT()
+    extractor_dst.detect_and_extract(dst_gray)
+
+    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True)
+    model, inliers = measure.ransac((extractor_src.keypoints[matches[:, 0]], extractor_dst.keypoints[matches[:, 1]]),
                             transform.ProjectiveTransform, 
                             min_samples=8,
                             residual_threshold=1, 
                             max_trials=5000,
                             random_state=np.random.default_rng(seed=9))
 
-    rows, cols, _ = np.shape(left)
-    coords_left = np.reshape(np.mgrid[:rows, :cols], (2, -1))
+    rows, cols, _ = np.shape(src)
+    coords_src = np.reshape(np.mgrid[:rows, :cols], (2, -1))
     ones = np.ones((1, rows * cols))
-    coords_right = np.concatenate((coords_left, ones), axis=0)
-    coords_right = model.params @ coords_right
-    coords_right = np.int_(coords_right[:2, :] / coords_right[2:, :])
-    rows, cols, _ = np.shape(right)
-    to_delete = np.logical_or(coords_right < 0, coords_right >= [[rows], [cols]])
-    to_delete = np.any(to_delete, axis=0)
-    coords_left = np.delete(coords_left, to_delete, axis=1)
-    coords_right = np.delete(coords_right, to_delete, axis=1)
+    coords_dst = np.concatenate((coords_src, ones), axis=0)
+    coords_dst = model.params @ coords_dst
+    coords_dst = np.int_(coords_dst[:2, :] / coords_dst[2:, :])
+    rows, cols, _ = np.shape(dst)
+    valid = np.all((coords_dst >= 0, coords_dst < [[rows], [cols]]), axis=(0, 1))
+    coords_src = coords_src[:,valid]
+    coords_dst = coords_dst[:,valid]
+    return coords_src, coords_dst
 
-    return coords_left, coords_right
+class Demo:
+    def __init__(self, stream):
+        stream = iter(stream)
+        first_src, first_dst = next(stream)
+        src_shape = np.shape(first_src)
+        dst_shape = np.shape(first_dst)
 
-def corresponding_coordinates_flow(left, right):
-    left = color.rgb2gray(left)
-    right = color.rgb2gray(right)
+        self.needs_calibration = True
 
-    rows, cols = np.shape(left)
-    coords_left = np.mgrid[:rows, :cols]
-    coords_left = np.reshape(coords_left, (2, -1))
+        fig, axs = plt.subplots(1, 8)
 
-    coords_right = registration.optical_flow_ilk(left, right)
-    coords_right = np.reshape(coords_right, (2, -1))
+        self.src_widget = axs[0].imshow(np.zeros(src_shape))
+        self.src_widget.axes.set_position([0.0, 0.66, 0.3, 0.5])
+        self.src_widget.axes.set_axis_off()
 
-    coords_right = coords_left + coords_right
-    coords_right = np.int_(np.round(coords_right))
-    to_delete = np.logical_or(coords_right < 0, coords_right >= [[rows], [cols]])
-    to_delete = np.any(to_delete, axis=0)
-    coords_left = np.delete(coords_left, to_delete, axis=1)
-    coords_right = np.delete(coords_right, to_delete, axis=1)
+        self.dst_widget = axs[1].imshow(np.zeros(dst_shape))
+        self.dst_widget.axes.set_position([0.0, 0.33, 0.3, 0.5])
+        self.dst_widget.axes.set_axis_off()
 
-    return coords_left, coords_right
+        self.output_widget = axs[2].imshow(np.zeros(src_shape))
+        self.output_widget.axes.set_position([0.0, 0.0, 0.3, 0.5])
+        self.output_widget.axes.set_axis_off()
 
-def estimate_model(left, right, coords_left, coords_right):
-    colors_left = left[coords_left[0], coords_left[1], :]
-    colors_left = color.rgb2lab(colors_left)
-    colors_right = right[coords_right[0], coords_right[1], :]
-    colors_right = color.rgb2lab(colors_right)
-    to_delete = np.any((colors_left[:,0] < 10, colors_left[:,0] > 90, colors_right[:,0] < 10, colors_right[:,0] > 90), axis=0)
-    print('filtering', np.sum(to_delete), 'elements to do over- or under-exposure')
-    colors_left = np.delete(colors_left, to_delete, axis=0)
-    colors_right = np.delete(colors_right, to_delete, axis=0)
+        self.src_points = axs[6].imshow(np.zeros(src_shape))
+        self.src_points.axes.set_position([0.4, 0.6, 0.3, 0.5])
+        self.src_points.axes.set_axis_off()
 
-    new_left = []
-    left_lab = color.rgb2lab(left)
-    for left_lab, channel_left, channel_right in zip(np.moveaxis(left_lab, -1, 0), np.transpose(colors_left), np.transpose(colors_right)):
-        print(channel_left.shape, channel_right.shape)
-        fig, axs = plt.subplots(1, 2, sharex=True, sharey=True)
-        axs[0].scatter(channel_left, channel_right)
-        result = scipy.stats.linregress(channel_left, channel_right)
-        new_left.append(left_lab * result.slope + result.intercept)
-        axs[1].scatter(channel_left, channel_left * result.slope + result.intercept)
+        self.dst_points = axs[7].imshow(np.zeros(src_shape))
+        self.dst_points.axes.set_position([0.4, 0.3, 0.3, 0.5])
+        self.dst_points.axes.set_axis_off()
+
+        self.slider = widgets.Slider(axs[3], 'hello', 0, 1, valinit=0.3)
+        self.slider.ax.set_position([0.6, 0.9, 0.5, 0.02]) 
+        self.slider.on_changed(self.slider_update)
+
+        self.textbox = widgets.TextBox(axs[4], 'world', initial='')
+        self.textbox.ax.set_position([0.6, 0.6, 0.5, 0.02]) 
+        self.textbox.on_submit(self.text_update)
+
+        self.button = widgets.Button(axs[5], 'calibrate')
+        self.button.ax.set_position([0.6, 0.3, 0.5, 0.02]) 
+        self.button.on_clicked(self.calibrate_clicked)
+
+        ani = animation.FuncAnimation(fig, self.animate, stream, cache_frame_data=False, blit=True, interval=50)
         plt.show()
-#         model, inliers = measure.ransac(np.column_stack((channel_left, channel_right)),
-#                         measure.LineModelND, 
-#                         min_samples=8,
-#                         residual_threshold=0.003, 
-#                         max_trials=500,
-#                         random_state=np.random.default_rng(seed=9))
-#         print(len(inliers))
-#         axs[1].scatter(channel_left, model.predict_y(channel_left))
-#         plt.show()
-#         new_left.append(np.reshape(model.predict_y(np.ravel(left_lab)), np.shape(left_lab)))
-    new_left = np.moveaxis(new_left, 0, -1)
-    new_left = color.lab2rgb(new_left)
-    return new_left
 
-def modeler_linear_regression(data, weights):
-    weighted = data * weights
-    total_weight = np.sum(weights)
+    def text_update(self, new_text):
+        pass
 
-    x, y = np.sum(weighted, axis=0)
-    xx, yy = np.sum(np.square(weighted), axis=0)
-    xy = np.sum(weighted[:,0] * weighted[:, 1])
-
-    slope_numer = total_weight * xy - x * y
-    slope_denom = total_weight * xx - x * x
-    slope = slope_numer / slope_denom
-    intercept = y - slope * x
-    intercept = intercept / total_weight
-
-    residual = np.square(data[:,0] * slope + intercept - data[:,1])
-
-    return (slope, intercept), residual
-
-def modeler_bins(data, weights, bin_count, data_min, data_max):
-    data_bins = (data[:,0] - data_min) / (data_max - data_min)
-    data_bins = np.int_(data_bins * bin_count)
-    data_bins = np.clip(data_bins, 0, bin_count - 1)
+    def slider_update(self, new):
+        pass
     
-    bins = np.zeros((bin_count,))
-    np.add.at(bins, data_bins, data[:,1] * weights)
-    bin_counts = np.zeros((bin_count,))
-    np.add.at(bin_counts, data_bins, weights)
+    def calibrate_clicked(self, arg):
+        self.needs_calibration = True
 
-    bins = np.where(bin_counts, bins / bin_counts, 0) # TODO: better choice here
+    def animate(self, stream):
+        src, dst = stream 
+        
+        if self.needs_calibration:
+            self.needs_calibration = False
+            self.coords_src, self.coords_dst = corresponding_coordinates(src, dst)
+#             
+#             self.lightness_model = IterativeReweight()
+#             self.temperature_model = IterativeReweight()
+#             self.tint_model = IterativeReweight()
+# 
+#         self.lightness_model.step()
+#         self.temperature_model.step()
+#         self.tint_model.step()
 
-    residual = np.square(bins[data_bins] - data[:,1])
+        output = estimate_model(src, dst, self.coords_src, self.coords_dst)
+        
+        self.src_widget.set_array(util.img_as_ubyte(src))
+        self.dst_widget.set_array(util.img_as_ubyte(dst))
+        self.output_widget.set_array(util.img_as_ubyte(output))
+        return [self.src_widget, self.dst_widget, self.output_widget]
 
-    return bins, residual
+Demo(stream_dummy())
 
-def iteratively_reweighted(data, modeler, min_weight, iteration_count, rng):
-    initial_weights = rng.choice(len(data), min_weight, replace=False)
-    weights = np.zeros((len(data), 1))
-    weights[initial_weights] = 1.0
 
-    while iteration_count:
+class IterativeReweight:
+    def __init__(self, p, i, d, step, coords_src, coords_dst):
+        initial_weights = rng.choice(len(data), min_weight, replace=False)
+        self.weights = np.zeros((len(data), 1))
+        self.weights[initial_weights] = 1.0
+        self.error = 0
+        self.integral = 0
+
+    def estimate(src, dst, ):
+        pass
+
+    def step():
         model, residual = modeler(data, weights)
         factor = 1.345 * np.median(np.abs(residual - np.median(residual)))
-        new_weights = np.where(residual < factor, factor, factor / residual)
-        weights = new_weights
+        measurement = np.where(residual < factor, factor, factor / residual)
 
-    return model
+        step = 0.01
 
-def webcam_demo():
-    # webcam_stream = iio.imiter('inputs/video.mp4')
-    webcam_stream = (a[::1, ::1, :] for a in iio.imiter('<video0>', size='320x180'))
-    fig, (ax, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 4))
+        setpoint = self.weights
+        error = setpoint - measurement
+        proportional = error
+        self.integral = self.integral + error * self.step.val
+        derivative = (error - self.error) / self.step.val
+        self.error = error
+        self.weights = self.p.val * proportional + self.i.val * self.integral + self.d.val * derivative
 
-    slider = widgets.Slider(ax2, 'hello', 0, 1, valinit=0.3)
-    slider.ax.set_position([0.25, 0.01, 0.5, 0.02]) 
-    slider.on_changed(lambda v: print(v))
-    textbox = widgets.TextBox(ax3, 'world', initial='')
-    textbox.ax.set_position([0.25, 0.11, 0.5, 0.02]) 
-    textbox.on_submit(lambda v: print(v))
-
-    ax_image = ax.imshow(next(webcam_stream))
-    def animate(image):
-        ax_image.set_array(np.uint8(image * slider.val))
-        return [ax_image]
-    ani = animation.FuncAnimation(fig, animate, webcam_stream, cache_frame_data=False, blit=True, interval=0)
-    plt.show()
-
-left = io.imread('inputs/a.jpg')
-right = io.imread('inputs/b.jpg')
-
-left = util.img_as_float32(left)
-right = util.img_as_float32(right)
-
-webcam_demo()
-
-coords_left, coords_right = corresponding_coordinates(left, right)
-# output = estimate_model(left, right, coords_left, coords_right)
-# print(np.min(output), np.max(output))
-rl, cl = coords_left
-rr, cr = coords_right
-left[rl, cl, :] *= 0.5
-right[rr, cr, :] *= 0.5
-fig, ax = plt.subplots(1, 2)
-ax[0].imshow(left)
-ax[1].imshow(right)
-plt.show()
