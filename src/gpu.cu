@@ -11,6 +11,24 @@
 #include <chrono>
 
 __global__
+void matrix_vector_kernel(int irows, int icols, double *matrix, int orows, int ocols double *out) {
+    size_t i = threadIdx.x;
+    size_t j = blockIdx.x;
+    for (int k = 0; k < irows + icols; k++) {
+        if (i + j == k) {
+            out[i*ocols + j] = min3(out[(i-1)*ocols + (j-1)], out[(i-1)*ocols + j], out[i + (j-1)]) + matrix[x + y*icols]
+        }
+    }
+    int r = blockIdx.y;
+    int c = blockIdx.x * blockDim.x + threadIdx.x;
+}
+
+__global__
+void cost_kernel(int rows, int cols, double *src, double *dst) {
+
+}
+
+__global__
 void matrix_vector_kernel(int rows, int cols, double *matrix, double *vector, double *result) {
     extern __shared__ double shared_memory[];
 
@@ -57,7 +75,8 @@ matrix_vector(int problem_count, int rows, int cols, double *matrix, double *vec
     cudaMemcpy(vector_d, vector, problem_count * cols * sizeof(double), cudaMemcpyHostToDevice);
 
     dim3 block_shape(1024, 1);
-    dim3 grid_shape((cols + block_shape.x - 1) / block_shape.x, rows);
+    dim3 
+    ((cols + block_shape.x - 1) / block_shape.x, rows);
     int shared_memory = 256 / 32 * sizeof(double);
 
     auto start = std::chrono::high_resolution_clock::now();
