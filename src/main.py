@@ -287,6 +287,9 @@ class Demo:
 Demo(stream_dummy())
 
 
+def rectify(src, dst, fundamental, image_size):
+    pass
+
 class IterativeReweight:
     def __init__(self, p, i, d, step, coords_src, coords_dst):
         initial_weights = rng.choice(len(data), min_weight, replace=False)
