@@ -10,16 +10,16 @@ _gpu.matrix_vector.argtypes = [
     ctypes.c_int,
     ctypes.c_int,
     ctypes.c_int,
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')),
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')),
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C', 'W')),
+    ctypeslib.ndpointer(dtype=np.float32, flags=('A', 'C')),
+    ctypeslib.ndpointer(dtype=np.float32, flags=('A', 'C')),
+    ctypeslib.ndpointer(dtype=np.float32, flags=('A', 'C', 'W')),
 ]
 
 def matrix_vector(matrix, vector):
     problem_count, rows, cols = np.shape(matrix)
     assert np.shape(vector) == (problem_count, cols, 1)
-    matrix = np.require(matrix, dtype=np.float64, requirements=('A', 'C'))
-    vector = np.require(vector, dtype=np.float64, requirements=('A', 'C'))
+    matrix = np.require(matrix, dtype=np.float32, requirements=('A', 'C'))
+    vector = np.require(vector, dtype=np.float32, requirements=('A', 'C'))
     result = np.zeros((problem_count, rows, 1))
     elapsed = _gpu.matrix_vector(problem_count, rows, cols, matrix, vector, result)
     if np.isnan(elapsed):

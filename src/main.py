@@ -23,9 +23,12 @@ def rectify(src, dst):
     extractor_dst.detect_and_extract(dst_gray)
 
     matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True)
+    
+    fig, axs = plt.subplots()
+    feature.plot_matches(axs, src, dst, extractor_src.keypoints, extractor_dst.keypoints, matches)
 
     points_left = extractor_src.keypoints[matches[:, 0]]
-    points_right = extractor_dst.keypoints[matches[:, 1]] # row, col
+    points_right = extractor_dst.keypoints[matches[:, 1]]
 
     F, mask = cv2.findFundamentalMat(points_left, points_right)
     # F, mask = cv2.findFundamentalMat(points_left, points_right, cv2.FM_RANSAC, ransacReprojThreshold=1, confidence=0.99)
@@ -311,7 +314,12 @@ class Demo:
         # dst_rectify = transform.warp(dst, self.h2, output_shape=None, order=None, cval=0.0)
 
 
-        output = estimate_model(src, dst, self.coords_src, self.coords_dst)
+#         output = estimate_model(src, dst, self.coords_src, self.coords_dst)
+        output = src
+
+        print(self.coords_src.shape)
+        src[self.coords_src[0,:], self.coords_src[1,:], :] = [1.0, 0, 0]
+        dst[self.coords_dst[0,:], self.coords_dst[1,:], :] = [1.0, 0, 0]
         
         self.src_widget.set_array(util.img_as_ubyte(src))
         self.dst_widget.set_array(util.img_as_ubyte(dst))
