@@ -18,11 +18,9 @@
 // parallelize cumulative sum functions? not sure if that's needed
 // profile to see what bottlenecks are
 // is float range / precision large enough to handle the fact that we are doing the cumulative sum for 2d array? 
-// final result: 
-//      a map of (rows, cols_src) -> positive ssize_t disparity
-//      along with (rows, cols_src) -> occlusion map (0 fine, 1 left, 2 right)? or just (0, 1)?
+// only process some subset of the rows at once to limit our memory usage
 __global__
-void find_correspondances(ssize_t irows, ssize_t icols, ssize_t ocols, float *matrix, float *out) {
+void find_correspondances(ssize_t ocols, ssize_t irows, ssize_t icols, float *matrix, float *out) {
     size_t i = threadIdx.x;
     size_t j = blockIdx.x;
     for (ssize_t k = 0; k < irows + icols; k++) {
@@ -80,7 +78,7 @@ void patch_similarity(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, ssize_t 
 }
 
 __global__
-void traceback_disparity(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, float *correspondance_cost, int *disparity, int *occlusion) {
+void traceback_disparity(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, float *correspondance_cost, int *disparity, char *occlusion) {
     ssize_t r = blockIdx.y * blockDim.y + threadIdx.y;
 
     ssize_t d = 0;
@@ -94,7 +92,7 @@ void traceback_disparity(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, float
 }
 
 extern "C" double 
-scanline_stereo(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, ssize_t patch_size, float *src, float *dst, int *disparity, int *occlusion) {
+scanline_stereo(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, ssize_t patch_size, ssize_t row_block, float *src, float *dst, int *disparity, char *occlusion) {
     ssize_t ncuda_devices = 0;
     cudaGetDeviceCount(&ncuda_devices);
     if (ncuda_devices == 0) {
@@ -107,29 +105,36 @@ scanline_stereo(ssize_t cols_dst, ssize_t rows, ssize_t cols_src, ssize_t patch_
     // drc, dc, dr, r
 
     float *pixel_similarity, *patch_similarity, *correspondance_cost;
-    cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(float));
-    cudaMalloc(&patch_similarity, rows * cols_src * cols_dst * sizeof(float));
-    cudaMalloc(&correspondance_cost, rows * cols_src * cols_dst * sizeof(float));
-
-    int *disparity_device, *occlusion_device;
+    cudaMalloc(&pixel_similarity, row_block * cols_src * cols_dst * sizeof(float));
+    cudaMalloc(&patch_similarity, row_block * cols_src * cols_dst * sizeof(float));
+    cudaMalloc(&correspondance_cost, row_block * cols_src * cols_dst * sizeof(float));
+    int *disparity_device; 
     cudaMalloc(&disparity_device, rows * cols_src * sizeof(int));
-    cudaMalloc(&occlusion_device, rows * cols_src * sizeof(int));
+    char *occlusion_device;
+    cudaMalloc(&occlusion_device, rows * cols_src * sizeof(char));
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    pixel_similarity<<<grid_drc, block_drc, 0, 0>>>(cols_dst, rows, cols_src, src, dst, pixel_similarity);
-    cumulative_sum_cols_src<<<grid_dr, block_dr, 0, 0>>>(cols_dst, rows, cols_src, pixel_similarity);
-    cumulative_sum_rows<<<grid_dc, block_dc, 0, 0>>>(cols_dst, rows, cols_src, pixel_similarity);
-    patch_similarity<<<grid_drc, block_drc, 0, 0>>>(cols_dst, rows, cols_src, patch_size, pixel_similarity, patch_similarity);
-    find_correspondances<<<grid_shape, block_shape, 0, 0>>>(cols_dst, rows, cols_src, patch_similarity, correspondance_cost);
-    traceback_disparity<<<grid_r, block_r, 0, 0>>>(cols_dst, rows, cols_src, correspondance_cost, disparity_device, occlusion_device);
+    for (ssize_t row_start = 0; row_start < rows; row_start += row_block) {
+        pixel_similarity<<<grid_drc, block_drc, 0, 0>>>(cols_dst, rows, cols_src, src, dst, pixel_similarity);
+        cumulative_sum_cols_src<<<grid_dr, block_dr, 0, 0>>>(cols_dst, rows, cols_src, pixel_similarity);
+        cumulative_sum_rows<<<grid_dc, block_dc, 0, 0>>>(cols_dst, rows, cols_src, pixel_similarity);
+        patch_similarity<<<grid_drc, block_drc, 0, 0>>>(cols_dst, rows, cols_src, patch_size, pixel_similarity, patch_similarity);
+        find_correspondances<<<grid_shape, block_shape, 0, 0>>>(cols_dst, rows, cols_src, patch_similarity, correspondance_cost);
+        traceback_disparity<<<grid_r, block_r, 0, 0>>>(cols_dst, rows, cols_src, correspondance_cost, disparity_device, occlusion_device);
+    }
 
     cudaDeviceSynchronize();
     auto stop = std::chrono::high_resolution_clock::now();
     double elapsed = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
 
     cudaMemcpy(disparity, disparity_device, rows * cols_src * sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(occlusion, occlusion_device, rows * cols_src * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(occlusion, occlusion_device, rows * cols_src * sizeof(char), cudaMemcpyDeviceToHost);
+
+    cudaFree(pixel_similarity);
+    cudaFree(patch_similarity);
+    cudaFree(disparity_device);
+    cudaFree(occlusion_device);
 
     return elapsed;
 }
