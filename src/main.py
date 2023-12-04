@@ -22,13 +22,13 @@ def rectify(src, dst):
     extractor_dst = feature.SIFT()
     extractor_dst.detect_and_extract(dst_gray)
 
-    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True)
+    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True, max_ratio=0.1)
     
     fig, axs = plt.subplots()
     feature.plot_matches(axs, src, dst, extractor_src.keypoints, extractor_dst.keypoints, matches)
 
-    points_left = extractor_src.keypoints[matches[:, 0]]
-    points_right = extractor_dst.keypoints[matches[:, 1]]
+    points_left = np.fliplr(extractor_src.keypoints[matches[:, 0]])
+    points_right = np.fliplr(extractor_dst.keypoints[matches[:, 1]])
 
     F, mask = cv2.findFundamentalMat(points_left, points_right)
     # F, mask = cv2.findFundamentalMat(points_left, points_right, cv2.FM_RANSAC, ransacReprojThreshold=1, confidence=0.99)
@@ -92,7 +92,6 @@ def foo(src, dst):
     weights = np.exp(-np.square(weights) / (2 * np.square(sigma)))
     
     correlation = scipy.signal.correlate2d(dst_norm, src_patch, mode='same')
-    print(correlation.shape)
 
     print(weights.shape, correlation.shape, dst.shape)
 
@@ -181,6 +180,8 @@ def estimate_model(src, dst, coords_src, coords_dst):
 #     dst_stream = iio.imread('inputs/dst-small.mp4')
 #     while True:
 #         for src, dst in zip(src_stream, dst_stream):
+#             src = util.img_as_float32(src)
+#             dst = util.img_as_float32(dst)
 #             yield src, dst
 
 # def stream_two_camera():
@@ -202,11 +203,13 @@ def stream_dummy():
         dst = frame[::1, split1::1, :]
         return src, dst
     rng = np.random.default_rng()
-    for frame in iio.imiter('<video0>', size='320x180'):
+    while True: 
+        frame = iio.imread('inputs/20231111_0002.jpg')
+#     for frame in iio.imiter('<video0>', size='320x180'):
         frame = util.img_as_float32(frame)
         src, dst = split_thirds(frame)
         # dst = dst * 0.5
-        noise_scale = 0.03
+#         noise_scale = 0.03
         # src = src + rng.normal(scale=noise_scale, size=np.shape(src))
         # dst = dst + rng.normal(scale=noise_scale, size=np.shape(dst))
         src = util.img_as_float32(recompress(util.img_as_ubyte(np.clip(src, 0, 1))))
@@ -317,7 +320,6 @@ class Demo:
 #         output = estimate_model(src, dst, self.coords_src, self.coords_dst)
         output = src
 
-        print(self.coords_src.shape)
         src[self.coords_src[0,:], self.coords_src[1,:], :] = [1.0, 0, 0]
         dst[self.coords_dst[0,:], self.coords_dst[1,:], :] = [1.0, 0, 0]
         
