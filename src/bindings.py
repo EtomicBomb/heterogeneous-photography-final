@@ -5,6 +5,32 @@ import os
 
 _gpu = ctypeslib.load_library(os.environ['SHARED_OBJECT_PATH'], '.')
 
+_gpu.scanline_stereo_testing.restype = ctypes.c_double
+_gpu.scanline_stereo_testing.argtypes = [
+    ctypes.c_long, # rows
+    ctypes.c_long, # cols_src
+    ctypes.c_long, # cols_dst
+    ctypes.c_long, # patch size
+    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # src
+    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # dst
+    ctypeslib.ndpointer(dtype=np.int_, flags=('A', 'C', 'W')), # correspondance
+    ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # occlusion
+    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C', 'W')), # result
+]
+
+def scanline_stereo_testing(src, dst, patch_size):
+    rows, cols_src = np.shape(src)
+    rows_dst, cols_dst = np.shape(dst)
+    assert rows == rows_dst
+    src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
+    dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
+    correspondance = np.zeros((rows, cols_src), dtype=np.int_)
+    occlusion = np.zeros((rows, cols_src), dtype=np.byte)
+    result = np.zeros((rows, cols_src, cols_dst), dtype=np.float64)
+    returned = _gpu.scanline_stereo_testing(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, occlusion, result)
+    assert not np.isnan(returned)
+    return correspondance, occlusion, result
+
 _gpu.scanline_stereo.restype = ctypes.c_double
 _gpu.scanline_stereo.argtypes = [
     ctypes.c_long, # rows

@@ -335,23 +335,6 @@ class Demo:
 
         return [self.src_widget, self.dst_widget, self.output_widget, self.src_points, self.dst_points]
 
-def stereo_pair_test():
-    src = iio.imread('inputs/a.jpg')
-    dst = iio.imread('inputs/a.jpg')
-
-    src = util.img_as_float32(src)
-    dst = util.img_as_float32(dst)
-
-    src = color.rgb2gray(src)
-    dst = color.rgb2gray(dst)
-
-    patch_size = 15
-    correspondance, occlusion = scanline_stereo(src, dst, patch_size)
-    fig, axs = plt.subplots(1, 2)
-    axs[0].imshow(correspondance)
-    axs[1].imshow(occlusion)
-    plt.show()
-
 stereo_pair_test()
 # Demo(stream_dummy())
 

@@ -1,11 +1,14 @@
 ccflags = -g -Ofast --shared -fPIC -Wall
-nvccflags = -g -use_fast_math -O3 -arch=sm_60 --shared -Xcompiler -fPIC -Xcompiler -Wall
+nvccflags = -g -O3 -arch=sm_60 --shared -Xcompiler -fPIC -Xcompiler -Wall
 
 run-cpu: target/cpu.so
 	SHARED_OBJECT_PATH=$< python3 src/main.py
 
 run-gpu: target/gpu.so
 	SHARED_OBJECT_PATH=$< python3 src/main.py
+
+testing: target/gpu.so
+	SHARED_OBJECT_PATH=$< python3 src/testing.py
 
 target/cpu.so: src/cpu.cpp
 	g++ $< ${ccflags} -o $@
