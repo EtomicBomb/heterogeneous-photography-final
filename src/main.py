@@ -1,10 +1,9 @@
 import sys
-from dataclasses import dataclass
 import numpy as np
 import scipy
 import matplotlib.pyplot as plt
 from matplotlib import animation, widgets
-from matplotlib import image as pli
+from matplotlib.gridspec import GridSpec
 from skimage import data, transform, util, color, measure, feature, registration
 import cv2
 import imageio.v3 as iio
@@ -12,41 +11,6 @@ import io
 import time
 
 import bindings
-
-def rectify(src, dst):
-    src_gray = color.rgb2gray(src)
-    dst_gray = color.rgb2gray(dst)
-
-    extractor_src = feature.SIFT()
-    extractor_src.detect_and_extract(src_gray)
-    extractor_dst = feature.SIFT()
-    extractor_dst.detect_and_extract(dst_gray)
-
-    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True, max_ratio=0.1)
-    
-    fig, axs = plt.subplots()
-    feature.plot_matches(axs, src, dst, extractor_src.keypoints, extractor_dst.keypoints, matches)
-
-    points_left = np.fliplr(extractor_src.keypoints[matches[:, 0]])
-    points_right = np.fliplr(extractor_dst.keypoints[matches[:, 1]])
-
-    F, mask = cv2.findFundamentalMat(points_left, points_right)
-    # F, mask = cv2.findFundamentalMat(points_left, points_right, cv2.FM_RANSAC, ransacReprojThreshold=1, confidence=0.99)
-
-    print(np.linalg.eigvals(F))
-
-    # F, inliers = measure.ransac((points_left, points_right),
-    #                         transform.FundamentalMatrixTransform, 
-    #                         min_samples=8,
-    #                         residual_threshold=1, 
-    #                         max_trials=5000,
-    #                         random_state=np.random.default_rng(seed=9)) # row, col -> row, col
-    success, h1, h2 =cv2.stereoRectifyUncalibrated(points_left, points_right, F, src_gray.shape)
-    assert(success)
-    # h1 = transform.ProjectiveTransform(matrix=h1)
-    # h2 = transform.ProjectiveTransform(matrix=h2)
-
-    return h1, h2
     
 # 2 matrices of floats (images)
 def foo(src, dst):
@@ -114,7 +78,6 @@ def foo(src, dst):
     ax[4].imshow(weights * correlation)
 
     plt.show()
-
 
 def estimate_model(src, dst, coords_src, coords_dst):
     colors_src = src[coords_src[0], coords_src[1], :]
@@ -203,20 +166,20 @@ def stream_dummy():
         dst = frame[::1, split1::1, :]
         return src, dst
     rng = np.random.default_rng()
-    while True: 
-        frame = iio.imread('inputs/20231111_0002.jpg')
-#     for frame in iio.imiter('<video0>', size='320x180'):
+#     while True: 
+#         frame = iio.imread('inputs/20231111_0002.jpg')
+    for frame in iio.imiter('<video0>', size='320x180'):
         frame = util.img_as_float32(frame)
         src, dst = split_thirds(frame)
-        # dst = dst * 0.5
-#         noise_scale = 0.03
-        # src = src + rng.normal(scale=noise_scale, size=np.shape(src))
-        # dst = dst + rng.normal(scale=noise_scale, size=np.shape(dst))
+        dst = dst * 0.5
+        noise_scale = 0.0
+        src = src + rng.normal(scale=noise_scale, size=np.shape(src))
+        dst = dst + rng.normal(scale=noise_scale, size=np.shape(dst))
         src = util.img_as_float32(recompress(util.img_as_ubyte(np.clip(src, 0, 1))))
         dst = util.img_as_float32(recompress(util.img_as_ubyte(np.clip(dst, 0, 1))))
         yield src, dst
 
-def corresponding_coordinates(src, dst):
+def rectify(src, dst, max_ratio):
     src_gray = color.rgb2gray(src)
     dst_gray = color.rgb2gray(dst)
 
@@ -225,7 +188,42 @@ def corresponding_coordinates(src, dst):
     extractor_dst = feature.SIFT()
     extractor_dst.detect_and_extract(dst_gray)
 
-    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True)
+    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True, max_ratio=max_ratio)
+    
+    points_left = extractor_src.keypoints[matches[:, 0]]
+    points_right = extractor_dst.keypoints[matches[:, 1]]
+
+    F, mask = cv2.findFundamentalMat(points_left, points_right)
+    # F, mask = cv2.findFundamentalMat(points_left, points_right, cv2.FM_RANSAC, ransacReprojThreshold=1, confidence=0.99)
+
+    print(np.linalg.eigvals(F))
+
+    # F, inliers = measure.ransac((points_left, points_right),
+    #                         transform.FundamentalMatrixTransform, 
+    #                         min_samples=8,
+    #                         residual_threshold=1, 
+    #                         max_trials=5000,
+    #                         random_state=np.random.default_rng(seed=9)) # row, col -> row, col
+    success, h1, h2 =cv2.stereoRectifyUncalibrated(points_left, points_right, F, src_gray.shape)
+    assert(success)
+    # h1 = transform.ProjectiveTransform(matrix=h1)
+    # h2 = transform.ProjectiveTransform(matrix=h2)
+
+    return h1, h2
+def corresponding_coordinates(src, dst, max_ratio):
+    src_gray = color.rgb2gray(src)
+    dst_gray = color.rgb2gray(dst)
+
+    extractor_src = feature.SIFT()
+    extractor_src.detect_and_extract(src_gray)
+    extractor_dst = feature.SIFT()
+    extractor_dst.detect_and_extract(dst_gray)
+
+    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True, max_ratio=max_ratio)
+
+    fig, axs = plt.subplots()
+    feature.plot_matches(axs, src, dst, extractor_src.keypoints, extractor_dst.keypoints, matches)
+
     model, inliers = measure.ransac((extractor_src.keypoints[matches[:, 0]], extractor_dst.keypoints[matches[:, 1]]),
                             transform.ProjectiveTransform, 
                             min_samples=8,
@@ -247,6 +245,12 @@ def corresponding_coordinates(src, dst):
 
 class Demo:
     def __init__(self, stream):
+
+#         fig = plt.figure(figsize=(4, 6), layout="constrained")
+#         gs0 = fig.add_gridspec(6, 2)
+#         ax1 = fig.add_subplot(gs0[:3, 0])
+#         ax2 = fig.add_subplot(gs0[3:, 0])
+
         stream = iter(stream)
         first_src, first_dst = next(stream)
         src_shape = np.shape(first_src)
@@ -254,38 +258,39 @@ class Demo:
 
         self.needs_calibration = True
 
-        fig, axs = plt.subplots(1, 8)
+        fig = plt.figure(num='streams', layout='constrained')
+        gs = GridSpec(15, 3, figure=fig)
 
-        self.src_widget = axs[0].imshow(np.zeros(src_shape))
-        self.src_widget.axes.set_position([0.0, 0.66, 0.3, 0.5])
+        ax = fig.add_subplot(gs[0:3, 0])
+        self.src_widget = ax.imshow(np.zeros(src_shape))
         self.src_widget.axes.set_axis_off()
 
-        self.dst_widget = axs[1].imshow(np.zeros(dst_shape))
-        self.dst_widget.axes.set_position([0.0, 0.33, 0.3, 0.5])
+        ax = fig.add_subplot(gs[0:3, 1])
+        self.dst_widget = ax.imshow(np.zeros(dst_shape))
         self.dst_widget.axes.set_axis_off()
 
-        self.output_widget = axs[2].imshow(np.zeros(src_shape))
-        self.output_widget.axes.set_position([0.0, 0.0, 0.3, 0.5])
+        ax = fig.add_subplot(gs[0:3, 2])
+        self.output_widget = ax.imshow(np.zeros(src_shape))
         self.output_widget.axes.set_axis_off()
 
-        self.src_points = axs[6].imshow(np.zeros(src_shape))
-        self.src_points.axes.set_position([0.3, 0.6, 0.3, 0.5])
+        ax = fig.add_subplot(gs[3:6, 0])
+        self.src_points = ax.imshow(np.zeros(src_shape))
         self.src_points.axes.set_axis_off()
 
-        self.dst_points = axs[7].imshow(np.zeros(src_shape))
-        self.dst_points.axes.set_position([0.7, 0.6, 0.3, 0.5])
+        ax = fig.add_subplot(gs[3:6, 1])
+        self.dst_points = ax.imshow(np.zeros(src_shape))
         self.dst_points.axes.set_axis_off()
 
-        self.slider = widgets.Slider(axs[3], 'hello', 0, 1, valinit=0.3)
-        self.slider.ax.set_position([0.6, 0.9, 0.5, 0.02]) 
+        ax = fig.add_subplot(gs[-1, 2])
+        self.slider = widgets.Slider(ax, 'hello', 0, 1, valinit=0.3)
         self.slider.on_changed(self.slider_update)
 
-        self.textbox = widgets.TextBox(axs[4], 'world', initial='')
-        self.textbox.ax.set_position([0.6, 0.6, 0.5, 0.02]) 
+        ax = fig.add_subplot(gs[-1, 1])
+        self.textbox = widgets.TextBox(ax, 'world', initial='')
         self.textbox.on_submit(self.text_update)
 
-        self.button = widgets.Button(axs[5], 'calibrate')
-        self.button.ax.set_position([0.6, 0.3, 0.5, 0.02]) 
+        ax = fig.add_subplot(gs[-1, 0])
+        self.button = widgets.Button(ax, 'calibrate')
         self.button.on_clicked(self.calibrate_clicked)
 
         ani = animation.FuncAnimation(fig, self.animate, stream, cache_frame_data=False, blit=True, interval=50)
@@ -305,10 +310,8 @@ class Demo:
         
         if self.needs_calibration:
             self.needs_calibration = False
-            self.coords_src, self.coords_dst = corresponding_coordinates(src, dst)
-
-            self.h1, self.h2 = rectify(src, dst)
-
+            self.coords_src, self.coords_dst = corresponding_coordinates(src, dst, 1.0)
+            self.h1, self.h2 = rectify(src, dst, 0.4)
 
         src_rectify = cv2.warpPerspective(src, self.h1, np.shape(src)[:2])
         dst_rectify = cv2.warpPerspective(src, self.h2, np.shape(src)[:2])
@@ -317,11 +320,11 @@ class Demo:
         # dst_rectify = transform.warp(dst, self.h2, output_shape=None, order=None, cval=0.0)
 
 
-#         output = estimate_model(src, dst, self.coords_src, self.coords_dst)
-        output = src
+        output = estimate_model(src, dst, self.coords_src, self.coords_dst)
+#         output = src
 
-        src[self.coords_src[0,:], self.coords_src[1,:], :] = [1.0, 0, 0]
-        dst[self.coords_dst[0,:], self.coords_dst[1,:], :] = [1.0, 0, 0]
+#         src[self.coords_src[0,:], self.coords_src[1,:], :] = [1.0, 0, 0]
+#         dst[self.coords_dst[0,:], self.coords_dst[1,:], :] = [1.0, 0, 0]
         
         self.src_widget.set_array(util.img_as_ubyte(src))
         self.dst_widget.set_array(util.img_as_ubyte(dst))
@@ -332,7 +335,25 @@ class Demo:
 
         return [self.src_widget, self.dst_widget, self.output_widget, self.src_points, self.dst_points]
 
-Demo(stream_dummy())
+def stereo_pair_test():
+    src = iio.imread('inputs/a.jpg')
+    dst = iio.imread('inputs/a.jpg')
+
+    src = util.img_as_float32(src)
+    dst = util.img_as_float32(dst)
+
+    src = color.rgb2gray(src)
+    dst = color.rgb2gray(dst)
+
+    patch_size = 15
+    correspondance, occlusion = scanline_stereo(src, dst, patch_size)
+    fig, axs = plt.subplots(1, 2)
+    axs[0].imshow(correspondance)
+    axs[1].imshow(occlusion)
+    plt.show()
+
+stereo_pair_test()
+# Demo(stream_dummy())
 
 
 #             
