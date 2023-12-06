@@ -90,21 +90,26 @@ get_pixel_similarity(long rows, long cols_src, long cols_dst, double *src, doubl
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
 
-    long i = (r) * cols_dst * cols_src + (s) * cols_dst + (d);
+    if (blockIdx.x == 0 && blockIdx.z == 0 && blockIdx.y == 0 && threadIdx.y == 0 && threadIdx.x == 8 && threadIdx.z == 0) {
+       printf("bye world %ld %ld %ld || %ld %ld %ld || %g %g || %ld\n", r, s, d, rows, cols_src, cols_dst, 0.0, 0.0, (r) * cols_dst + (d));
+
+    }
+
     if (r == 0 && s == 8 && d == 0) {
 
+    //long i = (r) * cols_dst * cols_src + (s) * cols_dst + (d);
     //if (i == 3000) {
        printf("hello world %ld %ld %ld || %ld %ld %ld || %g %g || %ld\n", r, s, d, rows, cols_src, cols_dst, 0.0, 0.0, (r) * cols_dst + (d));
     }
 
-    if (r >= rows || s >= cols_src || d >= cols_dst) return;
+    //if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
-    double src_value = src Isrc(r, s);
-    double dst_value = dst Idst(r, d);
+    //double src_value = src Isrc(r, s);
+    //double dst_value = dst Idst(r, d);
 
     //double src_value = 0.0, dst_value = 0.0;
-    double distance = src_value - dst_value;
-    pixel_similarity I(r, s, d) = distance * distance;
+    //double distance = src_value - dst_value;
+    //pixel_similarity I(r, s, d) = distance * distance;
 }
 
 __global__ void 
