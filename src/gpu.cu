@@ -100,12 +100,10 @@ get_pixel_similarity(long rows, long cols_src, long cols_dst, double *src, doubl
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
 
-
     if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
     double src_value = src Isrc(r, s);
     double dst_value = dst Idst(r, d);
-
     double distance = src_value - dst_value;
     pixel_similarity I(r, s, d) = distance * distance;
 }
@@ -113,8 +111,8 @@ get_pixel_similarity(long rows, long cols_src, long cols_dst, double *src, doubl
 __global__ void 
 cumulative_sum_cols(long rows, long cols_src, long cols_dst, double *array) {
     // should range 0, ..., (cols_src + cols_dst)
-    long d = blockIdx.z * blockDim.z + threadIdx.z;
     long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
 
     if (r >= rows || d >= cols_dst) return;
 
@@ -142,17 +140,19 @@ cumulative_sum_rows(long rows, long cols_src, long cols_dst, double *array) {
 
 __global__ void 
 get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, double *pixel_similarity, double *patch_similarity) {
-    long d = blockIdx.z * blockDim.z + threadIdx.z;
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
+
+    if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
     long rn = dmax(r - patch_size - 1, 0l);
     long sn = dmax(s - patch_size - 1, 0l);
     long dn = dmax(d - patch_size - 1, 0l);
 
-    long rp = dmin(r + patch_size, rows);
-    long sp = dmin(s + patch_size, cols_src);
-    long dp = dmin(d + patch_size, cols_dst);
+    long rp = dmin(r + patch_size, rows - 1);
+    long sp = dmin(s + patch_size, cols_src - 1);
+    long dp = dmin(d + patch_size, cols_dst - 1);
 
     double sum = pixel_similarity I(rn,sn,dn) 
         + pixel_similarity I(rp,sp,dp) 
