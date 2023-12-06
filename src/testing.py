@@ -46,7 +46,6 @@ src = color.rgb2gray(src)
 dst = color.rgb2gray(dst)
 patch_size = 15
 
-src = np.ones((250, 375))
 correspondance, occlusion, result = scanline_stereo_testing(src, dst, patch_size)
 expected = pixel_similarity(src, dst)
 print(np.sum(~np.isclose(result, expected)))
