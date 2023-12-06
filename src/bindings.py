@@ -29,6 +29,7 @@ def scanline_stereo_testing(src, dst, patch_size):
     result = np.zeros((rows, cols_src, cols_dst), dtype=np.float64)
     returned = _gpu.scanline_stereo_testing(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, occlusion, result)
     assert not np.isnan(returned)
+    print('took', returned)
     return correspondance, occlusion, result
 
 _gpu.scanline_stereo.restype = ctypes.c_double
