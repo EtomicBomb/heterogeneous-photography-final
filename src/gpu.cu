@@ -85,31 +85,29 @@ traceback_correspondance(long rows, long cols_src, long cols_dst, double *corres
 }
 
 __global__ void 
+test_kernel() {
+    long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long s = blockIdx.x * blockDim.x + threadIdx.x;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
+	if (r < 10 && s < 10 && d < 10) {
+		/* printf("%ld %ld %ld\n", r, s, d); */
+	}
+}
+
+__global__ void 
 get_pixel_similarity(long rows, long cols_src, long cols_dst, double *src, double *dst, double *pixel_similarity) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (blockIdx.x == 0 && blockIdx.z == 0 && blockIdx.y == 0 && threadIdx.y == 0 && threadIdx.x == 8 && threadIdx.z == 0) {
-       printf("bye world %ld %ld %ld || %ld %ld %ld || %g %g || %ld\n", r, s, d, rows, cols_src, cols_dst, 0.0, 0.0, (r) * cols_dst + (d));
 
-    }
+    if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
-    if (r == 0 && s == 8 && d == 0) {
+    double src_value = src Isrc(r, s);
+    double dst_value = dst Idst(r, d);
 
-    //long i = (r) * cols_dst * cols_src + (s) * cols_dst + (d);
-    //if (i == 3000) {
-       printf("hello world %ld %ld %ld || %ld %ld %ld || %g %g || %ld\n", r, s, d, rows, cols_src, cols_dst, 0.0, 0.0, (r) * cols_dst + (d));
-    }
-
-    //if (r >= rows || s >= cols_src || d >= cols_dst) return;
-
-    //double src_value = src Isrc(r, s);
-    //double dst_value = dst Idst(r, d);
-
-    //double src_value = 0.0, dst_value = 0.0;
-    //double distance = src_value - dst_value;
-    //pixel_similarity I(r, s, d) = distance * distance;
+    double distance = src_value - dst_value;
+    pixel_similarity I(r, s, d) = distance * distance;
 }
 
 __global__ void 
@@ -174,25 +172,25 @@ scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size
     cudaSetDevice(0);
 
 
-    dim3 block_rsd(1, 32, 32);
+    dim3 block_rsd(32, 1, 32);
     dim3 grid_rsd(
-            (rows + block_rsd.y - 1) / block_rsd.y, 
             (cols_src + block_rsd.x - 1) / block_rsd.x, 
+            (rows + block_rsd.y - 1) / block_rsd.y, 
             (cols_dst + block_rsd.z - 1) / block_rsd.z);
     dim3 block_rd(32, 1, 32);
     dim3 grid_rd(
-            (rows + block_rd.y - 1) / block_rd.y, 
             1, 
+            (rows + block_rd.y - 1) / block_rd.y, 
             (cols_dst + block_rd.z - 1) / block_rd.z);
     dim3 block_sd(1, 32, 32);
     dim3 grid_sd(
-            1, 
             (cols_src + block_sd.x - 1) / block_sd.x, 
+            1, 
             (cols_dst + block_sd.z - 1) / block_sd.z);
     dim3 block_r(1024, 1, 1);
     dim3 grid_r(
-            (rows + block_r.y - 1) / block_r.y, 
             1, 
+            (rows + block_r.y - 1) / block_r.y, 
             1);
 
     double *src_device, *dst_device;
@@ -210,9 +208,13 @@ scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size
     char *occlusion_device;
     cudaMalloc(&occlusion_device, rows * cols_src * sizeof(char));
 
-    auto start = std::chrono::high_resolution_clock::now();
+    /* auto start = std::chrono::high_resolution_clock::now(); */
 
     printf("lets do it %d %d %d\n", grid_rsd.y, grid_rsd.x, grid_rsd.z);
+
+	dim3 mydimg(9, 9, 9);
+	dim3 mydimb(1, 32, 32);
+	test_kernel<<<mydimg, mydimb>>>();
     get_pixel_similarity<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, src_device, dst_device, pixel_similarity);
 
     cudaMemcpy(result, pixel_similarity, rows * cols_src * cols_dst * sizeof(double), cudaMemcpyDeviceToHost);
@@ -280,6 +282,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     auto start = std::chrono::high_resolution_clock::now();
 
+	printf("mememememem: %d\n", block_rsd.y*grid_rsd.y);
     get_pixel_similarity<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, src, dst, pixel_similarity);
     cumulative_sum_rows<<<grid_sd, block_sd, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
     cumulative_sum_cols<<<grid_rd, block_rd, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);

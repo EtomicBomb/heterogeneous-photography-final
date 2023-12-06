@@ -25,16 +25,16 @@ def pixel_similarity(src, dst):
 src = color.rgb2gray(src)
 dst = color.rgb2gray(dst)
 
-print(src.size, dst.size)
-
 patch_size = 15
+print('=================')
 correspondance, occlusion, result = scanline_stereo_testing(src, dst, patch_size)
+print('=================')
 expected = pixel_similarity(src, dst)
-print(expected[0, 8, 15])
-print(np.sum(np.isclose(expected.ravel(), result.ravel())))
-print(np.where(~np.isclose(expected.ravel() , result.ravel())))
-print(expected.ravel()[3000:3005])
-print(result.ravel()[3000:3005])
+print('expected[0,8,0]', expected[0, 8, 0])
+print('sum isclose', np.sum(np.isclose(expected.ravel(), result.ravel())))
+print('index of failure', np.where(~np.isclose(expected.ravel() , result.ravel())))
+print('expected', expected.ravel()[3000:3005])
+print('results ', result.ravel()[3000:3005])
 assert np.allclose(result, expected)
 fig, axs = plt.subplots(1, 2)
 axs[0].imshow(correspondance)
