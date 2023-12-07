@@ -14,7 +14,7 @@ _gpu.scanline_stereo.argtypes = [
     ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # src
     ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # dst
     ctypeslib.ndpointer(dtype=np.int_, flags=('A', 'C', 'W')), # correspondance
-    ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # occlusion
+    ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # valid
     ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C', 'W')), # result
 ]
 
@@ -25,12 +25,12 @@ def scanline_stereo(src, dst, patch_size):
     src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
     correspondance = np.zeros((rows, cols_src), dtype=np.int_)
-    occlusion = np.zeros((rows, cols_src), dtype=np.byte)
+    valid = np.zeros((rows, cols_src), dtype=np.byte)
     result = np.zeros((rows, cols_src, cols_dst), dtype=np.float64)
-    returned = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, occlusion, result)
+    returned = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, valid, result)
     assert not np.isnan(returned)
     print('took', returned)
-    return correspondance, occlusion, result
+    return correspondance, valid, result
 
 '''
 _gpu.scanline_stereo.restype = ctypes.c_double
@@ -42,7 +42,7 @@ _gpu.scanline_stereo.argtypes = [
     ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # src
     ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # dst
     ctypeslib.ndpointer(dtype=np.int_, flags=('A', 'C', 'W')), # correspondance
-    ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # occlusion
+    ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # valid
 ]
 
 def scanline_stereo(src, dst, patch_size):
@@ -52,10 +52,10 @@ def scanline_stereo(src, dst, patch_size):
     src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
     correspondance = np.zeros((rows, cols_src))
-    occlusion = np.zeros((rows, cols_src))
-    result = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, occlusion)
+    valid = np.zeros((rows, cols_src))
+    result = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, valid)
     assert not np.isnan(result)
-    return correspondance, occlusion
+    return correspondance, valid
 
 _gpu.matrix_vector.restype = ctypes.c_double
 _gpu.matrix_vector.argtypes = [
