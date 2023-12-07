@@ -9,34 +9,37 @@
 #include <stdio.h>
 #include <iostream>
 #include <chrono>
+#include <cmath>
 
 #define I(r, s, d) [(r) * cols_dst * cols_src + (s) * cols_dst + (d)]
 #define Isrc(r, s) [(r) * cols_src + (s)]
 #define Idst(r, d) [(r) * cols_dst + (d)]
 
-__device__ long argmin3(double x, double y, double z) {
+__device__ long 
+argmin3(double x, double y, double z) {
     if (x < y) {
         return x < z ? 0 : 2;
     } 
     return y < z ? 1 : 2;
 }
 
-__device__ long min3(double x, double y, double z) {
+__device__ long 
+min3(double x, double y, double z) {
     long index = argmin3(x, y, z);
     double numbers[] = {x, y, z};
     return numbers[index];
 }
 
-__device__ long dmin(long x, long y) {
+__device__ long 
+dmin(long x, long y) {
     return x < y ? x : y;
 }
 
-__device__ long dmax(long x, long y) {
-    return x < y ? x : y;
+__device__ long 
+dmax(long x, long y) {
+    return x > y ? x : y;
 }
 
-// [x] fix [r, s, d] -> [d * cols_src * rows + r * cols_src + s]
-// [x] index out of bounds, especially in patch_similarity
 // [ ] thread block nonmultiple edge case
 // [ ] pixel similarity based on something less aggressive than x^2
 // [ ] launch kernels with the right grid / block shape
@@ -46,24 +49,24 @@ __device__ long dmax(long x, long y) {
 // parallelize cumulative sum functions? not sure if that's needed
 
 __global__ void
-find_correspondances(long rows, long cols_src, long cols_dst, double *matrix, double *out) {
+find_correspondances(long rows, long cols_src, long cols_dst, const double *patch_similarity, double *correspondance_cost) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
-    long d = blockIdx.z * blockDim.z + threadIdx.z;
-
-    if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
     for (long k = 0; k < cols_src + cols_dst; k++) {
-        if (s + d == k) {
-            out I(r, s, d) = matrix I(r, s, d) +
-                min3(out I(r, s-1, d-1), out I(r, s-1, d), out I(r, s, d-1));
+        long d = k - s;
+        if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
+            double up_left = s - 1 >= 0 && d - 1 >= 0 ? correspondance_cost I(r, s - 1, d - 1) : INFINITY;
+            double left = d - 1 >= 0 ? correspondance_cost I(r, s, d - 1) : INFINITY;
+            double up = s - 1 >= 0 ? correspondance_cost I(r, s - 1, d) : INFINITY;
+            correspondance_cost I(r, s, d) = patch_similarity I(r, s, d) + min3(up_left, left, up); // this doesn't make sense because top left is gonna get infinity
         }
         __syncthreads();
     }
 }
 
 __global__ void
-traceback_correspondance(long rows, long cols_src, long cols_dst, double *correspondance_cost, long *correspondance, char *occlusion) {
+traceback_correspondance(long rows, long cols_src, long cols_dst, const double *correspondance_cost, long *correspondance, char *occlusion) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (r >= rows) return;
@@ -71,61 +74,30 @@ traceback_correspondance(long rows, long cols_src, long cols_dst, double *corres
     long s = cols_src - 1;
     long d = cols_dst - 1;
     while (s != 0 || d != 0) {
-        double up_left = correspondance_cost I(r, s - 1, d - 1);
-        double left = correspondance_cost I(r, s, d - 1);
-        double up = correspondance_cost I(r, s - 1, d);
-        long direction = argmin3(up_left, up, left);
-        long us[] = {-1, 0, -1}; 
-        long ud[] = {-1, -1, 0};
-        s += us[direction]; 
-        d += ud[direction]; 
+        double up_left = s - 1 >= 0 && d - 1 >= 0 ? correspondance_cost I(r, s - 1, d - 1) : INFINITY;
+        double left = d - 1 >= 0 ? correspondance_cost I(r, s, d - 1) : INFINITY;
+        double up = s - 1 >= 0 ? correspondance_cost I(r, s - 1, d) : INFINITY;
+        long direction = argmin3(up_left, left, up);
+        long us[] = {1, 0, 1}; 
+        long ud[] = {1, 1, 0};
+        s -= us[direction]; 
+        d -= ud[direction]; 
         correspondance Isrc(r, s) = d;
         occlusion Isrc(r, s) = direction != 0;
     }
 }
 
 __global__ void 
-get_pixel_similarity(long rows, long cols_src, long cols_dst, double *src, double *dst, double *pixel_similarity) {
+get_pixel_similarity(long rows, long cols_src, long cols_dst, const double *src, const double *dst, double *pixel_similarity) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
 
     if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
-    double src_value = src Isrc(r, s);
-    double dst_value = dst Idst(r, d);
-    double distance = src_value - dst_value;
+    double distance = src Isrc(r, s) - dst Idst(r, d);
     pixel_similarity I(r, s, d) = distance * distance;
 }
-
-/*
-    cumulative_sum_cols<<<grid_rd2, block_rd2, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
-
-    dim3 block_rd2(32, 1, 32);
-    dim3 grid_rd2(
-            1, 
-            (rows + block_rd2.y - 1) / block_rd2.y, 
-            (cols_src + cols_dst + block_rd2.z - 1) / block_rd2.z);
-__global__ void 
-cumulative_sum_cols(long rows, long cols_src, long cols_dst, double *array) {
-    long r = blockIdx.y * blockDim.y + threadIdx.y;
-    long d = blockIdx.z * blockDim.z + threadIdx.z;
-
-    //printf("return %ld %ld\n", r, d);
-    if (r >= rows || d >= cols_src + cols_dst) return;
-
-    long c_src_start = 0, c_dst_start = 0;
-    if (d >= cols_src) {
-        c_dst_start = d - cols_src;
-    } else {
-        c_src_start = d;
-    }
-    long bound = dmin(cols_src - c_src_start, cols_dst - c_dst_start);
-    for (long c = 1; c < bound; c++) {
-        array I(r, c_src_start + c, c_dst_start + c) += array I(r, c_src_start + c - 1, c_dst_start + c - 1);
-    }
-}
-*/
 
 __device__ void 
 sum_diagonal(long rows, long cols_src, long cols_dst, long r, long s, long d, double *array) {
@@ -142,8 +114,8 @@ __global__ void
 cumulative_sum_cols_src(long rows, long cols_src, long cols_dst, double *array) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
-    if (r >= rows || s >= cols_src) return;
     long d = 0;
+    if (r >= rows || s >= cols_src) return;
     if (s == 0) return; // only want to sum central diagonal once
     sum_diagonal(rows, cols_src, cols_dst, r, s, d, array);
 }
@@ -151,9 +123,9 @@ cumulative_sum_cols_src(long rows, long cols_src, long cols_dst, double *array) 
 __global__ void 
 cumulative_sum_cols_dst(long rows, long cols_src, long cols_dst, double *array) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long s = 0;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
     if (r >= rows || d >= cols_dst) return;
-    long s = 0;
     sum_diagonal(rows, cols_src, cols_dst, r, s, d, array);
 }
 
@@ -168,7 +140,7 @@ cumulative_sum_rows(long rows, long cols_src, long cols_dst, double *array) {
 }
 
 __global__ void 
-get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, double *pixel_similarity, double *patch_similarity) {
+get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, const double *pixel_similarity, double *patch_similarity) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
@@ -183,49 +155,23 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, d
     long sp = dmin(s + patch_size, cols_src - 1);
     long dp = dmin(d + patch_size, cols_dst - 1);
 
-    double sum = pixel_similarity I(rn, sn, dn) 
-        + pixel_similarity I(rp, sp, dp) 
+    double sum = 
+        pixel_similarity I(rp, sp, dp) 
+        + pixel_similarity I(rn, sn, dn) 
         - pixel_similarity I(rp, sn, dn) 
         - pixel_similarity I(rn, sp, dp);
-    double count = (rp - rn + 1) * dmin(sp - sn + 1, dp - dn + 1);
+    double count = (rp - rn) * dmin(sp - sn, dp - dn);
     patch_similarity I(r, s, d) = sum / count;
 }
 
 extern "C" double
-scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size, double *src, double *dst, long *correspondance, char *occlusion, double *result) {
+scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size, const double *src, const double *dst, long *correspondance, char *occlusion, double *result) {
     int ncuda_devices = 0;
     cudaGetDeviceCount(&ncuda_devices);
     if (ncuda_devices == 0) {
         return std::nan("");
     }
     cudaSetDevice(0);
-
-    dim3 block_rsd(32, 1, 32);
-    dim3 grid_rsd(
-            (cols_src + block_rsd.x - 1) / block_rsd.x, 
-            (rows + block_rsd.y - 1) / block_rsd.y, 
-            (cols_dst + block_rsd.z - 1) / block_rsd.z);
-    dim3 block_sd(1, 32, 32);
-    dim3 grid_sd(
-            (cols_src + block_sd.x - 1) / block_sd.x, 
-            1, 
-            (cols_dst + block_sd.z - 1) / block_sd.z);
-    dim3 block_r(1024, 1, 1);
-    dim3 grid_r(
-            1, 
-            (rows + block_r.y - 1) / block_r.y, 
-            1);
-
-    dim3 block_rs(32, 32, 1);
-    dim3 grid_rs(
-            (cols_src + block_rs.x - 1) / block_rs.x, 
-            (rows + block_rs.y - 1) / block_rs.y, 
-            1);
-    dim3 block_rd(1, 32, 32);
-    dim3 grid_rd(
-            1, 
-            (rows + block_rd.y - 1) / block_rd.y, 
-            (cols_dst + block_rd.z - 1) / block_rd.z);
 
     double *src_device, *dst_device;
     cudaMalloc(&src_device, rows * cols_src * sizeof(*src_device));
@@ -243,16 +189,36 @@ scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size
     cudaMalloc(&occlusion_device, rows * cols_src * sizeof(char));
 
     auto start = std::chrono::high_resolution_clock::now(); 
+    dim3 block, grid;
 
-    get_pixel_similarity<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, src_device, dst_device, pixel_similarity);
-    cumulative_sum_rows<<<grid_sd, block_sd, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
+    block = dim3(32, 1, 32);
+    grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
+    get_pixel_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, src_device, dst_device, pixel_similarity);
 
-    cumulative_sum_cols_src<<<grid_rs, block_rs, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
-    cumulative_sum_cols_dst<<<grid_rd, block_rd, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
 
-    get_patch_similarity<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
-    //find_correspondances<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, patch_similarity, correspondance_cost);
-    //traceback_correspondance<<<grid_r, block_r, 0, 0>>>(rows, cols_src, cols_dst, correspondance_cost, correspondance_device, occlusion_device);
+    block = dim3(1, 32, 32);
+    grid = dim3((cols_src + block.x - 1) / block.x, 1, (cols_dst + block.z - 1) / block.z);
+    cumulative_sum_rows<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
+
+    block = dim3(32, 32, 1);
+    grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, 1);
+    cumulative_sum_cols_src<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
+
+    block = dim3(1, 32, 32);
+    grid = dim3(1, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
+    cumulative_sum_cols_dst<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
+
+    block = dim3(32, 1, 32);
+    grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
+    get_patch_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
+
+    block = dim3(cols_src, 1, 1);
+    grid = dim3(1, rows, 1);
+    find_correspondances<<<block, grid, 0, 0>>>(rows, cols_src, cols_dst, patch_similarity, correspondance_cost);
+
+    block = dim3(1, 1024, 1);
+    grid = dim3(1, (rows + block.y - 1) / block.y, 1);
+    traceback_correspondance<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, correspondance_cost, correspondance_device, occlusion_device);
 
     cudaDeviceSynchronize();
     auto stop = std::chrono::high_resolution_clock::now();
@@ -348,6 +314,54 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     return elapsed;
 }
 
+/*
+__global__ void
+find_correspondances(long rows, long cols_src, long cols_dst, double *matrix, double *out) {
+    long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long s = blockIdx.x * blockDim.x + threadIdx.x;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
+
+    if (r >= rows || s >= cols_src || d >= cols_dst) return;
+
+    for (long k = 0; k < cols_src + cols_dst; k++) {
+        if (s + d == k) {
+            out I(r, s, d) = matrix I(r, s, d) +
+                min3(out I(r, s-1, d-1), out I(r, s-1, d), out I(r, s, d-1));
+        }
+        __syncthreads();
+    }
+}
+*/
+
+
+/*
+    cumulative_sum_cols<<<grid_rd2, block_rd2, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
+
+    dim3 block_rd2(32, 1, 32);
+    dim3 grid_rd2(
+            1, 
+            (rows + block_rd2.y - 1) / block_rd2.y, 
+            (cols_src + cols_dst + block_rd2.z - 1) / block_rd2.z);
+__global__ void 
+cumulative_sum_cols(long rows, long cols_src, long cols_dst, double *array) {
+    long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
+
+    //printf("return %ld %ld\n", r, d);
+    if (r >= rows || d >= cols_src + cols_dst) return;
+
+    long c_src_start = 0, c_dst_start = 0;
+    if (d >= cols_src) {
+        c_dst_start = d - cols_src;
+    } else {
+        c_src_start = d;
+    }
+    long bound = dmin(cols_src - c_src_start, cols_dst - c_dst_start);
+    for (long c = 1; c < bound; c++) {
+        array I(r, c_src_start + c, c_dst_start + c) += array I(r, c_src_start + c - 1, c_dst_start + c - 1);
+    }
+}
+*/
 
 
 //////////////////////////// SAMPLE CODE //////////////////////////////////////////
