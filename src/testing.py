@@ -50,7 +50,9 @@ patch_size = 15
 # print(np.min(result), np.max(result))
 # print(result.shape)
 
-correspondance, occlusion, result = scanline_stereo_testing(src, dst, patch_size)
+correspondance, occlusion, result = scanline_stereo(src, dst, patch_size)
 expected = pixel_similarity(src, dst)
 print(np.sum(~np.isclose(result, expected)))
 assert np.allclose(result, expected)
+
+print(correspondance)

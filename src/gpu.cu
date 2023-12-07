@@ -165,7 +165,7 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 }
 
 extern "C" double
-scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size, const double *src, const double *dst, long *correspondance, char *occlusion, double *result) {
+scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, const double *src, const double *dst, long *correspondance, char *occlusion, double *result) {
     int ncuda_devices = 0;
     cudaGetDeviceCount(&ncuda_devices);
     if (ncuda_devices == 0) {
@@ -235,6 +235,8 @@ scanline_stereo_testing(long rows, long cols_src, long cols_dst, long patch_size
     double elapsed = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
     return elapsed;
 }
+
+/*
 
 extern "C" double
 scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double *src, double *dst, long *correspondance, char *occlusion) {
@@ -314,7 +316,6 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     return elapsed;
 }
 
-/*
 __global__ void
 find_correspondances(long rows, long cols_src, long cols_dst, double *matrix, double *out) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
