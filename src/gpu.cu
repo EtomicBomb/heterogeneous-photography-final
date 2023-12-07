@@ -230,6 +230,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, const 
     auto start = std::chrono::high_resolution_clock::now(); 
     dim3 block, grid;
 
+    /*
     block = dim3(32, 1, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     get_pixel_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, src_device, dst_device, pixel_similarity);
@@ -249,6 +250,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, const 
     block = dim3(32, 1, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     get_patch_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
+    */
 
 	double *patch22;
     cudaMalloc(&patch22, rows * cols_src * cols_dst * sizeof(*patch_similarity));
