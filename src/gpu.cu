@@ -15,6 +15,8 @@
 #define Isrc(r, s) [(r) * cols_src + (s)]
 #define Idst(r, d) [(r) * cols_dst + (d)]
 
+#define CHECK(e) do { cudaError_t err; if ((err = e) != cudaSuccess) { printf("line %d: %s\n", __LINE__, cudaGetErrorString(err)); exit(1);} } while (0)
+
 __device__ long 
 argmin3(double x, double y, double z) {
     if (x < y) {
@@ -147,22 +149,32 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 
     if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
-    long rm = dmax(r - patch_size - 1, 0);
-    long sm = dmax(s - patch_size - 1, 0);
-    long dm = dmax(d - patch_size - 1, 0);
+    long rm = r - patch_size - 1;
+    long sm = s - patch_size - 1;
+    long dm = d - patch_size - 1;
 
     long rp = dmin(r + patch_size, rows - 1);
-    long sp = dmin(s + patch_size, cols_src - 1);
-    long dp = dmin(d + patch_size, cols_dst - 1);
+	long overflow = dmax(0, dmax(s + patch_size - (cols_src - 1), d + patch_size - (cols_dst - 1)));
+    long sp = s + patch_size - overflow;
+    long dp = d + patch_size - overflow;
 
-    double sum = 
-        pixel_similarity I(rp, sp, dp) 
-        - pixel_similarity I(rp, sm, dm) 
-        - pixel_similarity I(rm, sp, dp)
-        + pixel_similarity I(rm, sm, dm); 
+	double rpspdp = pixel_similarity I(rp, sp, dp);
+	double rpsmdm = sm >= 0 && dm >= 0 ? pixel_similarity I(rp, sm, dm) : 0.0;
+	double rmspdp = rm >= 0 ? pixel_similarity I(rm, sp, dp): 0.0;
+	double rmsmdm = rm >= 0 && sm >= 0 && dm >= 0 ? pixel_similarity I(rm, sm, dm) : 0.0;
 
-    double count = (rp - rm) * dmin(sp - sm, dp - dm);
-    patch_similarity I(r, s, d) = sum;
+    double sum = rpspdp + rmsmdm - rpsmdm - rmspdp;
+
+    /* double count = (rp - rm) * dmin(sp - sm, dp - dm); */
+	long underflow = - dmin(0, dmin(sm, dm) + 1);
+	long overflow_count = dmax(0, dmax(s + patch_size - (cols_src - 1), d + patch_size - (cols_dst - 1)));
+    long count = (rp - dmax(rm, -1)) * (2 * patch_size + 1 - underflow - overflow_count);
+	if (r == 0 && s == 0 && d == 374) {
+		printf("%ld %ld\n", (rp - dmax(rm, -1)), (2 * patch_size + 1 - underflow - overflow_count));
+		printf("%ld\n", count);
+	}
+
+    patch_similarity I(r, s, d) = sum / count;
 }
 
 __global__ void
@@ -178,7 +190,7 @@ get_patch_similarity2(long rows, long cols_src, long cols_dst, long patch_size, 
     for (long rn = r - patch_size; rn <= r + patch_size; rn++) {
         for (long sn = s - patch_size; sn <= s + patch_size; sn++) {
             long dn = sn + d - s;
-            if (rn >= rows || rn < 0 || sn >= cols_src || sn < 0 || dn < 0 || dn > cols_dst) continue;
+            if (rn >= rows || rn < 0 || sn >= cols_src || sn < 0 || dn < 0 || dn >= cols_dst) continue;
             double distance = src Isrc(rn, sn) - dst Idst(rn, dn);
             sum += distance * distance;
             count += 1;
@@ -238,24 +250,40 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, const 
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     get_patch_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
 
-    /*
+	double *patch22;
+    cudaMalloc(&patch22, rows * cols_src * cols_dst * sizeof(*patch_similarity));
     block = dim3(32, 1, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
-    get_patch_similarity2<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, src_device, dst_device, patch_similarity);
-    */
+    get_patch_similarity2<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, src_device, dst_device, patch22);
+	double *result2 = (double *)malloc(rows * cols_src * cols_dst * sizeof(*patch_similarity));
+    CHECK(cudaMemcpy(result2, patch22, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
     
-    block = dim3(cols_src, 1, 1);
-    grid = dim3(1, rows, 1);
-    find_correspondances<<<block, grid, 0, 0>>>(rows, cols_src, cols_dst, patch_similarity, correspondance_cost);
+    /* block = dim3(cols_src, 1, 1); */
+    /* grid = dim3(1, rows, 1); */
+    /* find_correspondances<<<block, grid, 0, 0>>>(rows, cols_src, cols_dst, patch_similarity, correspondance_cost); */
 
-    block = dim3(1, 1024, 1);
-    grid = dim3(1, (rows + block.y - 1) / block.y, 1);
-    traceback_correspondance<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, correspondance_cost, correspondance_device, valid_device);
+    /* block = dim3(1, 1024, 1); */
+    /* grid = dim3(1, (rows + block.y - 1) / block.y, 1); */
+    /* traceback_correspondance<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, correspondance_cost, correspondance_device, valid_device); */
 
-    cudaDeviceSynchronize();
+    CHECK(cudaDeviceSynchronize());
     auto stop = std::chrono::high_resolution_clock::now();
 
-    cudaMemcpy(result, patch_similarity, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost);
+    CHECK(cudaMemcpy(result, patch_similarity, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
+	long count = 0;
+	for (int i = 0; i < rows; i++) {
+		for (int j = 0; j < cols_src; j++) {
+			for (int k = 0; k < cols_dst; k++) {
+				double x = result2 I(i,j,k);
+				double y = result I(i,j,k);
+				if (fabs(x - y) >= 0.00001) {
+					count++;
+				}
+			}
+		}
+	}
+	long total = rows * cols_src * cols_dst;
+	printf("%ld / %ld = %g\n", count, total, (double)count / (double)total);
     cudaMemcpy(correspondance, correspondance_device, rows * cols_src * sizeof(*correspondance), cudaMemcpyDeviceToHost);
     cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost);
 
