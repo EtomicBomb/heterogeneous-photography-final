@@ -165,15 +165,9 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 
     double sum = rpspdp + rmsmdm - rpsmdm - rmspdp;
 
-    /* double count = (rp - rm) * dmin(sp - sm, dp - dm); */
 	long underflow = - dmin(0, dmin(sm, dm) + 1);
 	long overflow_count = dmax(0, dmax(s + patch_size - (cols_src - 1), d + patch_size - (cols_dst - 1)));
     long count = (rp - dmax(rm, -1)) * (2 * patch_size + 1 - underflow - overflow_count);
-	if (r == 0 && s == 0 && d == 374) {
-		printf("%ld %ld\n", (rp - dmax(rm, -1)), (2 * patch_size + 1 - underflow - overflow_count));
-		printf("%ld\n", count);
-	}
-
     patch_similarity I(r, s, d) = sum / count;
 }
 
