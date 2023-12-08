@@ -61,6 +61,9 @@ find_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, const
             if (s == 0 || d == 0) {
                 cost I(r, s, d) = dmax(s, d) * occlusion_cost;
             } else {
+                if (s < 0 || d < 0 || s-1 < 0 || d - 1 < 0) {
+                    printf("bad %ld %ld\n", s, d);
+                }
                 double match = cost I(r, s - 1, d - 1) + patch_similarity I(r, s, d);
                 double left = cost I(r, s, d - 1) + occlusion_cost;
                 double up = cost I(r, s - 1, d) + occlusion_cost;
@@ -164,10 +167,10 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
     long sp = s + patch_size - overflow;
     long dp = d + patch_size - overflow;
 
-    double rpspdp = pixel_similarity I(rp, sp, dp);
-    double rpsmdm = sm >= 0 && dm >= 0 ? pixel_similarity I(rp, sm, dm) : 0.0;
-    double rmspdp = rm >= 0 ? pixel_similarity I(rm, sp, dp): 0.0;
-    double rmsmdm = rm >= 0 && sm >= 0 && dm >= 0 ? pixel_similarity I(rm, sm, dm) : 0.0;
+    double rpspdp = pixel_similarity I(rp, sp, dp); // XXX
+    double rpsmdm = sm >= 0 && dm >= 0 ? pixel_similarity I(rp, sm, dm) : 0.0; // XXX
+    double rmspdp = rm >= 0 ? pixel_similarity I(rm, sp, dp): 0.0; // XXX
+    double rmsmdm = rm >= 0 && sm >= 0 && dm >= 0 ? pixel_similarity I(rm, sm, dm) : 0.0; // XXX
     double sum = rpspdp + rmsmdm - rpsmdm - rmspdp;
 
     long underflow = - dmin(0, dmin(sm, dm) + 1);
@@ -175,7 +178,7 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
     long height = 2 * patch_size + 1 - underflow - overflow;
     long count = width * height;
 
-    patch_similarity I(r, s, d) = sum / count;
+    patch_similarity I(r, s, d) = sum / count; // XXX
 }
 
 __global__ void
@@ -202,7 +205,7 @@ get_patch_similarity2(long rows, long cols_src, long cols_dst, long patch_size, 
 }
 
 extern "C" double
-scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, double *result) {
+scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings) {
     int ncuda_devices = 0;
     cudaGetDeviceCount(&ncuda_devices);
     if (ncuda_devices == 0) {
@@ -228,49 +231,91 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaMalloc(&valid_device, rows * cols_src * sizeof(*valid_device));
     cudaMemset(&valid_device, 0, rows * cols_src * sizeof(*valid_device));
 
-    auto start = std::chrono::high_resolution_clock::now(); 
+    // XXX: for testing
+    double *patch22;
+    cudaMalloc(&patch22, rows * cols_src * cols_dst * sizeof(*patch22));
+
     dim3 block, grid;
+
+    std::vector<cudaEvent_t> events(9);
+    for (cudaEvent_t& event : events) {
+        cudaEventCreate(&event);
+    }
+    cudaEventRecord(events[0]);
 
     block = dim3(32, 1, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     get_pixel_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, src_device, dst_device, pixel_similarity);
 
+    cudaEventRecord(events[1]);
+
     block = dim3(1, 32, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, 1, (cols_dst + block.z - 1) / block.z);
     cumulative_sum_rows<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
 
+    cudaEventRecord(events[2]);
+
     block = dim3(32, 32, 1);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, 1);
     cumulative_sum_cols_src<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
+    
+    cudaEventRecord(events[3]);
 
     block = dim3(1, 32, 32);
     grid = dim3(1, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     cumulative_sum_cols_dst<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
 
+    cudaEventRecord(events[4]);
+
     block = dim3(32, 1, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     get_patch_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
 
+    cudaEventRecord(events[5]);
+
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
-    find_costs<<<block, grid, 0, 0>>>(rows, cols_src, cols_dst, occlusion_cost, patch_similarity, cost);
+    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, occlusion_cost, patch_similarity, cost);
+
+    cudaEventRecord(events[6]);
 
     block = dim3(1, 1024, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
     traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, cost, correspondence_device, valid_device);
 
-    CHECK(cudaDeviceSynchronize());
-    auto stop = std::chrono::high_resolution_clock::now();
+    cudaEventRecord(events[7]);
 
-    CHECK(cudaMemcpy(result, patch_similarity, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
-    cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(*correspondence), cudaMemcpyDeviceToHost);
-    cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost);
-
-    double *patch22;
-    cudaMalloc(&patch22, rows * cols_src * cols_dst * sizeof(*patch_similarity));
     block = dim3(32, 1, 32);
     grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
     get_patch_similarity2<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, src_device, dst_device, patch22);
+
+    cudaEventRecord(events[8]);
+
+    //CHECK(cudaMemcpy(result, patch_similarity, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(*correspondence), cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost));
+
+    CHECK(cudaDeviceSynchronize());
+
+    cudaFree(src_device);
+    cudaFree(dst_device);
+    cudaFree(pixel_similarity);
+    cudaFree(patch_similarity);
+    cudaFree(cost);
+    cudaFree(correspondence_device);
+    cudaFree(valid_device);
+    cudaFree(patch22);
+
+    int timing_index = 0;
+    for (cudaEvent_t& event : events) {
+        cudaEventElapsedTime(&timings[timing_index], events[0], event);
+        timing_index += 1;
+    }
+
+    return 0.0;
+}
+
+    /*
     double *result2 = (double *)malloc(rows * cols_src * cols_dst * sizeof(*patch_similarity));
     CHECK(cudaMemcpy(result2, patch22, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
     long count = 0;
@@ -287,15 +332,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     }
     long total = rows * cols_src * cols_dst;
     printf("%ld / %ld = %g\n", count, total, (double)count / (double)total);
-
-    cudaFree(pixel_similarity);
-    cudaFree(patch_similarity);
-    cudaFree(correspondence_device);
-    cudaFree(valid_device);
-
-    double elapsed = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
-    return elapsed;
-}
+    */
 
 /*
 

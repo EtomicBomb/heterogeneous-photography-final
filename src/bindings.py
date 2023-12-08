@@ -16,7 +16,7 @@ _gpu.scanline_stereo.argtypes = [
     ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # dst
     ctypeslib.ndpointer(dtype=np.int_, flags=('A', 'C', 'W')), # correspondance
     ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # valid
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C', 'W')), # result
+    ctypeslib.ndpointer(dtype=np.float32, flags=('A', 'C', 'W')), # timings
 ]
 
 def scanline_stereo(src, dst, patch_size, occlusion_cost):
@@ -27,11 +27,10 @@ def scanline_stereo(src, dst, patch_size, occlusion_cost):
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
     correspondance = np.zeros((rows, cols_src), dtype=np.int_)
     valid = np.zeros((rows, cols_src), dtype=np.byte)
-    result = np.zeros((rows, cols_src, cols_dst), dtype=np.float64)
-    time = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, result)
+    timings = np.zeros((100,), dtype=np.float32)
+    time = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
     assert not np.isnan(time)
-    print('took', time)
-    return correspondance, valid, result
+    return correspondance, valid, timings
 
 '''
 _gpu.scanline_stereo.restype = ctypes.c_double
