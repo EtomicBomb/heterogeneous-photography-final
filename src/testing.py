@@ -4,6 +4,7 @@ from skimage import data, transform, util, color, measure, feature, registration
 from skimage import io as skimage_io
 import io
 import time
+from scipy import io as scipy_io
 
 from bindings import *
 
@@ -36,20 +37,24 @@ def pixel_similarity(src, dst):
     expected = cum_sum_diagonal(expected)
     return expected
 
-src = skimage_io.imread('inputs/a.jpg')
-dst = skimage_io.imread('inputs/a.jpg')
+# src = skimage_io.imread('inputs/20231111_0001.jpg')
+# dst = skimage_io.imread('inputs/20231111_0002.jpg')
+
+src = skimage_io.imread('inputs/u.jpg')
+dst = skimage_io.imread('inputs/v.jpg')
 src = util.img_as_float64(src)
 dst = util.img_as_float64(dst)
 src = color.rgb2gray(src)
 dst = color.rgb2gray(dst)
 rows, cols_src = np.shape(src)
 _, cols_dst = np.shape(dst)
-patch_size = 15
+patch_size = 10
+occlusion_cost = 0.5
 
-correspondance, valid, result = scanline_stereo(src, dst, patch_size)
-print(np.min(result), np.max(result))
+correspondence, valid, result = scanline_stereo(src, dst, patch_size, occlusion_cost)
+print('min, max of result', np.min(result), np.max(result))
 
-
+scipy_io.savemat('out.mat', {'correspondence': correspondence, 'valid': valid})
 
 # pixel_similarity = np.square(np.reshape(src, (rows, cols_src, 1)) - np.reshape(dst, (rows, 1, cols_dst)))
 # 
@@ -67,7 +72,7 @@ print(np.min(result), np.max(result))
 
 
 
-# correspondance, valid, result = scanline_stereo(src, dst, patch_size)
+# correspondence, valid, result = scanline_stereo(src, dst, patch_size)
 # expected = pixel_similarity(src, dst)
 # print(np.sum(~np.isclose(result, expected)))
 # assert np.allclose(result, expected)
