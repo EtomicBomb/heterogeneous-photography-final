@@ -3,10 +3,7 @@ from numpy import ctypeslib
 import ctypes
 import os
 
-_gpu = ctypeslib.load_library(os.environ['SHARED_OBJECT_PATH'], '.')
-
-_gpu.scanline_stereo.restype = ctypes.c_double
-_gpu.scanline_stereo.argtypes = [
+scanline_stereo_argtypes = [
     ctypes.c_long, # rows
     ctypes.c_long, # cols_src
     ctypes.c_long, # cols_dst
@@ -19,7 +16,17 @@ _gpu.scanline_stereo.argtypes = [
     ctypeslib.ndpointer(dtype=np.float32, flags=('A', 'C', 'W')), # timings
 ]
 
-def scanline_stereo(src, dst, patch_size, occlusion_cost):
+try:
+    _gpu = ctypeslib.load_library('target/gpu', '.')
+    _gpu.scanline_stereo.restype = ctypes.c_int
+    _gpu.scanline_stereo.argtypes = scanline_stereo_argtypes
+
+    _gpu.scanline_stereo_naive.restype = ctypes.c_int
+    _gpu.scanline_stereo_naive.argtypes = scanline_stereo_argtypes
+except:
+    pass
+
+def scanline_stereo_naive_gpu(src, dst, patch_size, occlusion_cost):
     rows, cols_src = np.shape(src)
     rows_dst, cols_dst = np.shape(dst)
     assert rows == rows_dst
@@ -27,55 +34,37 @@ def scanline_stereo(src, dst, patch_size, occlusion_cost):
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
     correspondance = np.zeros((rows, cols_src), dtype=np.int_)
     valid = np.zeros((rows, cols_src), dtype=np.byte)
-    timings = np.zeros((100,), dtype=np.float32)
-    time = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
-    assert not np.isnan(time)
+    timings = np.zeros((3,), dtype=np.float32)
+    ok = _gpu.scanline_stereo_naive(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
+    assert ok >= 0
     return correspondance, valid, timings
 
-'''
-_gpu.scanline_stereo.restype = ctypes.c_double
-_gpu.scanline_stereo.argtypes = [
-    ctypes.c_long, # rows
-    ctypes.c_long, # cols_src
-    ctypes.c_long, # cols_dst
-    ctypes.c_long, # patch size
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # src
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')), # dst
-    ctypeslib.ndpointer(dtype=np.int_, flags=('A', 'C', 'W')), # correspondance
-    ctypeslib.ndpointer(dtype=np.byte, flags=('A', 'C', 'W')), # valid
-]
-
-def scanline_stereo(src, dst, patch_size):
+def scanline_stereo_gpu(src, dst, patch_size, occlusion_cost):
     rows, cols_src = np.shape(src)
     rows_dst, cols_dst = np.shape(dst)
     assert rows == rows_dst
     src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
-    correspondance = np.zeros((rows, cols_src))
-    valid = np.zeros((rows, cols_src))
-    result = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, src, dst, correspondance, valid)
-    assert not np.isnan(result)
-    return correspondance, valid
+    correspondance = np.zeros((rows, cols_src), dtype=np.int_)
+    valid = np.zeros((rows, cols_src), dtype=np.byte)
+    timings = np.zeros((7,), dtype=np.float32)
+    ok = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
+    assert ok >= 0
+    return correspondance, valid, timings
 
-_gpu.matrix_vector.restype = ctypes.c_double
-_gpu.matrix_vector.argtypes = [
-    ctypes.c_long,
-    ctypes.c_long,
-    ctypes.c_long,
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')),
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C')),
-    ctypeslib.ndpointer(dtype=np.float64, flags=('A', 'C', 'W')),
-]
-'''
+_cpu = ctypeslib.load_library('target/cpu', '.')
+_cpu.scanline_stereo.restype = ctypes.c_int
+_cpu.scanline_stereo.argtypes = scanline_stereo_argtypes
 
-def matrix_vector(matrix, vector):
-    problem_count, rows, cols = np.shape(matrix)
-    assert np.shape(vector) == (problem_count, cols, 1)
-    matrix = np.require(matrix, dtype=np.float64, requirements=('A', 'C'))
-    vector = np.require(vector, dtype=np.float64, requirements=('A', 'C'))
-    result = np.zeros((problem_count, rows, 1))
-    elapsed = _gpu.matrix_vector(problem_count, rows, cols, matrix, vector, result)
-    if np.isnan(elapsed):
-        elapsed = None
-    return result, elapsed
-
+def scanline_stereo_cpu(src, dst, patch_size, occlusion_cost):
+    rows, cols_src = np.shape(src)
+    rows_dst, cols_dst = np.shape(dst)
+    assert rows == rows_dst
+    src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
+    dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
+    correspondance = np.zeros((rows, cols_src), dtype=np.int_)
+    valid = np.zeros((rows, cols_src), dtype=np.byte)
+    timings = np.zeros((7,), dtype=np.float32)
+    ok = _cpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
+    assert ok >= 0
+    return correspondance, valid, timings

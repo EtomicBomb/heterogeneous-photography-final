@@ -1,6 +1,5 @@
 #include <cuda.h>
 #include <stdio.h>
-#include <math.h>
 #include <complex>
 #include <cmath>
 #include <stdio.h>
@@ -32,16 +31,6 @@ min3(double x, double y, double z) {
     return numbers[index];
 }
 
-__device__ long 
-dmin(long x, long y) {
-    return x < y ? x : y;
-}
-
-__device__ long 
-dmax(long x, long y) {
-    return x > y ? x : y;
-}
-
 // [ ] thread block nonmultiple edge case
 // [ ] pixel similarity based on something less aggressive than x^2
 // [ ] launch kernels with the right grid / block shape
@@ -59,11 +48,8 @@ find_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, const
         long d = k - s;
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
             if (s == 0 || d == 0) {
-                cost I(r, s, d) = dmax(s, d) * occlusion_cost;
+                cost I(r, s, d) = max(s, d) * occlusion_cost;
             } else {
-                if (s < 0 || d < 0 || s-1 < 0 || d - 1 < 0) {
-                    printf("bad %ld %ld\n", s, d);
-                }
                 double match = cost I(r, s - 1, d - 1) + patch_similarity I(r, s, d);
                 double left = cost I(r, s, d - 1) + occlusion_cost;
                 double up = cost I(r, s - 1, d) + occlusion_cost;
@@ -162,27 +148,28 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
     long sm = s - patch_size - 1;
     long dm = d - patch_size - 1;
 
-    long rp = dmin(r + patch_size, rows - 1);
-    long overflow = dmax(0, dmax(s + patch_size - (cols_src - 1), d + patch_size - (cols_dst - 1)));
+    long overflow = max(0l, max(s + patch_size - cols_src + 1, d + patch_size - cols_dst + 1));
+    long underflow = - min(0l, min(sm, dm) + 1);
+
+    long rp = min(r + patch_size, rows - 1);
     long sp = s + patch_size - overflow;
     long dp = d + patch_size - overflow;
 
-    double rpspdp = pixel_similarity I(rp, sp, dp); // XXX
-    double rpsmdm = sm >= 0 && dm >= 0 ? pixel_similarity I(rp, sm, dm) : 0.0; // XXX
-    double rmspdp = rm >= 0 ? pixel_similarity I(rm, sp, dp): 0.0; // XXX
-    double rmsmdm = rm >= 0 && sm >= 0 && dm >= 0 ? pixel_similarity I(rm, sm, dm) : 0.0; // XXX
-    double sum = rpspdp + rmsmdm - rpsmdm - rmspdp;
+    double rpsp = pixel_similarity I(rp, sp, dp);
+    double rpsm = sm >= 0 && dm >= 0 ? pixel_similarity I(rp, sm, dm) : 0.0;
+    double rmsp = rm >= 0 ? pixel_similarity I(rm, sp, dp): 0.0;
+    double rmsm = rm >= 0 && sm >= 0 && dm >= 0 ? pixel_similarity I(rm, sm, dm) : 0.0;
+    double sum = rpsp + rmsm - rpsm - rmsp;
 
-    long underflow = - dmin(0, dmin(sm, dm) + 1);
-    long width = rp - dmax(rm, -1);
+    long width = rp - max(rm, -1l);
     long height = 2 * patch_size + 1 - underflow - overflow;
     long count = width * height;
 
-    patch_similarity I(r, s, d) = sum / count; // XXX
+    patch_similarity I(r, s, d) = sum / count;
 }
 
 __global__ void
-get_patch_similarity2(long rows, long cols_src, long cols_dst, long patch_size, const double *src, const double *dst, double *patch_similarity) {
+get_patch_similarity_naive(long rows, long cols_src, long cols_dst, long patch_size, const double *src, const double *dst, double *patch_similarity) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
@@ -204,12 +191,83 @@ get_patch_similarity2(long rows, long cols_src, long cols_dst, long patch_size, 
     patch_similarity I(r, s, d) = sum / count;
 }
 
-extern "C" double
+extern "C" int
+scanline_stereo_naive(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings) {
+    int ncuda_devices = 0;
+    cudaGetDeviceCount(&ncuda_devices);
+    if (ncuda_devices == 0) {
+        return -1;
+    }
+    cudaSetDevice(0);
+
+    double *src_device;
+    cudaMalloc(&src_device, rows * cols_src * sizeof(*src_device));
+    cudaMemcpy(src_device, src, rows * cols_src * sizeof(*src_device), cudaMemcpyHostToDevice);
+    double *dst_device;
+    cudaMalloc(&dst_device, rows * cols_dst * sizeof(*dst_device));
+    cudaMemcpy(dst_device, dst, rows * cols_dst * sizeof(*dst_device), cudaMemcpyHostToDevice);
+
+    double *patch_similarity;
+    CHECK(cudaMalloc(&patch_similarity, rows * cols_src * cols_dst * sizeof(*patch_similarity)));
+    double *cost;
+    CHECK(cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(*cost)));
+    long *correspondence_device; 
+    CHECK(cudaMalloc(&correspondence_device, rows * cols_src * sizeof(*correspondence_device)));
+    char *valid_device;
+    CHECK(cudaMalloc(&valid_device, rows * cols_src * sizeof(*valid_device)));
+    cudaMemset(&valid_device, 0, rows * cols_src * sizeof(*valid_device));
+
+    dim3 block, grid;
+
+    size_t timing_event_count = 4;
+    std::vector<cudaEvent_t> events(timing_event_count);
+    for (cudaEvent_t& event : events) {
+        cudaEventCreate(&event);
+    }
+    cudaEventRecord(events[0]);
+
+    block = dim3(32, 1, 32);
+    grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
+    get_patch_similarity_naive<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, src_device, dst_device, patch_similarity);
+
+    cudaEventRecord(events[1]);
+
+    block = dim3(cols_src, 1, 1);
+    grid = dim3(1, rows, 1);
+    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, occlusion_cost, patch_similarity, cost);
+
+    cudaEventRecord(events[2]);
+
+    block = dim3(1, 1024, 1);
+    grid = dim3(1, (rows + block.y - 1) / block.y, 1);
+    traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, cost, correspondence_device, valid_device);
+
+    cudaEventRecord(events[3]);
+
+    CHECK(cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(*correspondence), cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost));
+
+    cudaFree(src_device);
+    cudaFree(dst_device);
+    cudaFree(patch_similarity);
+    cudaFree(cost);
+    cudaFree(correspondence_device);
+    cudaFree(valid_device);
+
+    for (size_t i = 1; i < timing_event_count; i++) {
+        cudaEventElapsedTime(&timings[i-1], events[0], events[i]);
+    }
+
+    return 0;
+
+}
+
+extern "C" int
 scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings) {
     int ncuda_devices = 0;
     cudaGetDeviceCount(&ncuda_devices);
     if (ncuda_devices == 0) {
-        return std::nan("");
+        return -1;
     }
     cudaSetDevice(0);
 
@@ -226,18 +284,14 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(*cost));
     long *correspondence_device; 
     cudaMalloc(&correspondence_device, rows * cols_src * sizeof(*correspondence_device));
-    cudaMemset(&correspondence_device, 0, rows * cols_src * sizeof(*correspondence_device));
     char *valid_device;
     cudaMalloc(&valid_device, rows * cols_src * sizeof(*valid_device));
     cudaMemset(&valid_device, 0, rows * cols_src * sizeof(*valid_device));
 
-    // XXX: for testing
-    double *patch22;
-    cudaMalloc(&patch22, rows * cols_src * cols_dst * sizeof(*patch22));
-
     dim3 block, grid;
 
-    std::vector<cudaEvent_t> events(9);
+    size_t timing_event_count = 8;
+    std::vector<cudaEvent_t> events(timing_event_count);
     for (cudaEvent_t& event : events) {
         cudaEventCreate(&event);
     }
@@ -279,23 +333,14 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     cudaEventRecord(events[6]);
 
-    block = dim3(1, 1024, 1);
+    block = dim3(1, rows, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
     traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, cost, correspondence_device, valid_device);
 
     cudaEventRecord(events[7]);
 
-    block = dim3(32, 1, 32);
-    grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
-    get_patch_similarity2<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, src_device, dst_device, patch22);
-
-    cudaEventRecord(events[8]);
-
-    //CHECK(cudaMemcpy(result, patch_similarity, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(*correspondence), cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost));
-
-    CHECK(cudaDeviceSynchronize());
 
     cudaFree(src_device);
     cudaFree(dst_device);
@@ -304,237 +349,10 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaFree(cost);
     cudaFree(correspondence_device);
     cudaFree(valid_device);
-    cudaFree(patch22);
 
-    int timing_index = 0;
-    for (cudaEvent_t& event : events) {
-        cudaEventElapsedTime(&timings[timing_index], events[0], event);
-        timing_index += 1;
+    for (size_t i = 1; i < timing_event_count; i++) {
+        cudaEventElapsedTime(&timings[i-1], events[0], events[i]);
     }
 
-    return 0.0;
+    return 0;
 }
-
-    /*
-    double *result2 = (double *)malloc(rows * cols_src * cols_dst * sizeof(*patch_similarity));
-    CHECK(cudaMemcpy(result2, patch22, rows * cols_src * cols_dst * sizeof(*result), cudaMemcpyDeviceToHost));
-    long count = 0;
-    for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols_src; j++) {
-                    for (int k = 0; k < cols_dst; k++) {
-                            double x = result2 I(i,j,k);
-                            double y = result I(i,j,k);
-                            if (fabs(x - y) >= 0.00001) {
-                                    count++;
-                            }
-                    }
-            }
-    }
-    long total = rows * cols_src * cols_dst;
-    printf("%ld / %ld = %g\n", count, total, (double)count / (double)total);
-    */
-
-/*
-
-extern "C" double
-scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double *src, double *dst, long *correspondence, char *valid) {
-    int ncuda_devices = 0;
-    cudaGetDeviceCount(&ncuda_devices);
-    if (ncuda_devices == 0) {
-        return std::nan("");
-    }
-    cudaSetDevice(0);
-
-    dim3 block_rsd(32, 1, 32);
-    dim3 grid_rsd(
-            (cols_src + block_rsd.x - 1) / block_rsd.x, 
-            (rows + block_rsd.y - 1) / block_rsd.y, 
-            (cols_dst + block_rsd.z - 1) / block_rsd.z);
-    dim3 block_sd(1, 32, 32);
-    dim3 grid_sd(
-            (cols_src + block_sd.x - 1) / block_sd.x, 
-            1, 
-            (cols_dst + block_sd.z - 1) / block_sd.z);
-    dim3 block_r(1024, 1, 1);
-    dim3 grid_r(
-            1, 
-            (rows + block_r.y - 1) / block_r.y, 
-            1);
-
-    dim3 block_rs(32, 32, 1);
-    dim3 grid_rs(
-            (cols_src + block_rs.x - 1) / block_rs.x, 
-            (rows + block_rs.y - 1) / block_rs.y, 
-            1);
-    dim3 block_rd(1, 32, 32);
-    dim3 grid_rd(
-            1, 
-            (rows + block_rd.y - 1) / block_rd.y, 
-            (cols_dst + block_rd.z - 1) / block_rd.z);
-
-    double *src_device, *dst_device;
-    cudaMalloc(&src_device, rows * cols_src * sizeof(*src_device));
-    cudaMalloc(&dst_device, rows * cols_dst * sizeof(*dst_device));
-    cudaMemcpy(src_device, src, rows * cols_src * sizeof(*src_device), cudaMemcpyHostToDevice);
-    cudaMemcpy(dst_device, dst, rows * cols_dst * sizeof(*dst_device), cudaMemcpyHostToDevice);
-
-    double *pixel_similarity, *patch_similarity, *cost;
-    cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(double));
-    cudaMalloc(&patch_similarity, rows * cols_src * cols_dst * sizeof(double));
-    cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(double));
-    long *correspondence_device; 
-    cudaMalloc(&correspondence_device, rows * cols_src * sizeof(long));
-    char *valid_device;
-    cudaMalloc(&valid_device, rows * cols_src * sizeof(char));
-
-    auto start = std::chrono::high_resolution_clock::now(); 
-
-    get_pixel_similarity<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, src_device, dst_device, pixel_similarity);
-    cumulative_sum_rows<<<grid_sd, block_sd, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
-
-    cumulative_sum_cols_src<<<grid_rs, block_rs, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
-    cumulative_sum_cols_dst<<<grid_rd, block_rd, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
-
-    get_patch_similarity<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
-    find_costs<<<grid_rsd, block_rsd, 0, 0>>>(rows, cols_src, cols_dst, patch_similarity, cost);
-    traceback_correspondence<<<grid_r, block_r, 0, 0>>>(rows, cols_src, cols_dst, cost, correspondence_device, valid_device);
-
-    cudaDeviceSynchronize();
-    auto stop = std::chrono::high_resolution_clock::now();
-
-    cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(long), cudaMemcpyDeviceToHost);
-    cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(char), cudaMemcpyDeviceToHost);
-
-    cudaFree(pixel_similarity);
-    cudaFree(patch_similarity);
-    cudaFree(correspondence_device);
-    cudaFree(valid_device);
-
-    double elapsed = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
-    return elapsed;
-}
-
-__global__ void
-find_costs(long rows, long cols_src, long cols_dst, double *matrix, double *out) {
-    long r = blockIdx.y * blockDim.y + threadIdx.y;
-    long s = blockIdx.x * blockDim.x + threadIdx.x;
-    long d = blockIdx.z * blockDim.z + threadIdx.z;
-
-    if (r >= rows || s >= cols_src || d >= cols_dst) return;
-
-    for (long k = 0; k < cols_src + cols_dst; k++) {
-        if (s + d == k) {
-            out I(r, s, d) = matrix I(r, s, d) +
-                min3(out I(r, s-1, d-1), out I(r, s-1, d), out I(r, s, d-1));
-        }
-        __syncthreads();
-    }
-}
-*/
-
-
-/*
-    cumulative_sum_cols<<<grid_rd2, block_rd2, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
-
-    dim3 block_rd2(32, 1, 32);
-    dim3 grid_rd2(
-            1, 
-            (rows + block_rd2.y - 1) / block_rd2.y, 
-            (cols_src + cols_dst + block_rd2.z - 1) / block_rd2.z);
-__global__ void 
-cumulative_sum_cols(long rows, long cols_src, long cols_dst, double *array) {
-    long r = blockIdx.y * blockDim.y + threadIdx.y;
-    long d = blockIdx.z * blockDim.z + threadIdx.z;
-
-    //printf("return %ld %ld\n", r, d);
-    if (r >= rows || d >= cols_src + cols_dst) return;
-
-    long c_src_start = 0, c_dst_start = 0;
-    if (d >= cols_src) {
-        c_dst_start = d - cols_src;
-    } else {
-        c_src_start = d;
-    }
-    long bound = dmin(cols_src - c_src_start, cols_dst - c_dst_start);
-    for (long c = 1; c < bound; c++) {
-        array I(r, c_src_start + c, c_dst_start + c) += array I(r, c_src_start + c - 1, c_dst_start + c - 1);
-    }
-}
-*/
-
-
-//////////////////////////// SAMPLE CODE //////////////////////////////////////////
-
-__global__ void 
-matrix_vector_kernel(long rows, long cols, double *matrix, double *vector, double *result) {
-    extern __shared__ double shared_memory[];
-
-    long r = blockIdx.y;
-    long s = blockIdx.x * blockDim.x + threadIdx.x;
-
-    double warp_sum = s >= cols ? 0.0 : matrix[r * cols + s] * vector[s];
-
-    for (long offset = warpSize/2; offset > 0; offset /= 2) {
-        warp_sum += __shfl_down_sync(0xffffffff, warp_sum, offset);
-    }
-
-    if (threadIdx.x % warpSize == 0) {
-        shared_memory[threadIdx.x / warpSize] = warp_sum;
-    }
-
-     __syncthreads();
-    double block_sum = 0.0;
-    for (long i = 0; i < blockDim.x / warpSize; i++) {
-        block_sum += shared_memory[i];
-    }
-
-    if (threadIdx.x == 0) {
-        atomicAdd(&result[r], block_sum);
-    }
-}
-
-extern "C" double 
-matrix_vector(long problem_count, long rows, long cols, double *matrix, double *vector, double *result) {
-    int ncuda_devices = 0;
-    cudaGetDeviceCount(&ncuda_devices);
-    if (ncuda_devices == 0) {
-        return std::nan("");
-    }
-    cudaSetDevice(0);
-
-    double *matrix_d, *vector_d, *result_d;
-    cudaMalloc(&matrix_d, problem_count * rows * cols * sizeof(double));
-    cudaMalloc(&vector_d, problem_count * cols * sizeof(double));
-    cudaMalloc(&result_d, problem_count * rows * sizeof(double));
-
-    cudaMemcpy(matrix_d, matrix, problem_count * rows * cols * sizeof(double), cudaMemcpyHostToDevice);
-    cudaMemcpy(vector_d, vector, problem_count * cols * sizeof(double), cudaMemcpyHostToDevice);
-
-    dim3 block_shape(1024, 1);
-    dim3 grid_shape((cols + block_shape.x - 1) / block_shape.x, rows);
-    long shared_memory = 256 / 32 * sizeof(double);
-
-    auto start = std::chrono::high_resolution_clock::now();
-    for (long i = 0; i < problem_count; i++) {
-        matrix_vector_kernel<<<grid_shape, block_shape, shared_memory, 0>>>(
-                rows, 
-                cols, 
-                matrix_d + i * rows * cols, 
-                vector_d + i * cols, 
-                result_d + i * rows
-        );
-    }
-
-    cudaDeviceSynchronize();
-    auto stop = std::chrono::high_resolution_clock::now();
-    double elapsed = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
-
-    cudaMemcpy(result, result_d, problem_count * rows * sizeof(double), cudaMemcpyDeviceToHost);
-
-    cudaFree(matrix_d);
-    cudaFree(vector_d);
-    cudaFree(result_d);
-
-    return elapsed / problem_count;
-}
-
