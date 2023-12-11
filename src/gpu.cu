@@ -16,7 +16,7 @@
 
 #define CHECK(e) do { cudaError_t err; if ((err = e) != cudaSuccess) { printf("line %d: %s\n", __LINE__, cudaGetErrorString(err)); exit(1);} } while (0)
 
-__device__ long 
+__device__ inline char 
 argmin3(double x, double y, double z) {
     if (x < y) {
         return x < z ? 0 : 2;
@@ -24,11 +24,12 @@ argmin3(double x, double y, double z) {
     return y < z ? 1 : 2;
 }
 
-__device__ double 
-min3(double x, double y, double z) {
-    long index = argmin3(x, y, z);
+__device__ inline void 
+min3(double x, double y, double z, double *min, char *argmin) {
     double numbers[] = {x, y, z};
-    return numbers[index];
+    char index = argmin3(x, y, z);
+    *argmin = index;
+    *min = numbers[index];
 }
 
 // [ ] thread block nonmultiple edge case
@@ -66,7 +67,7 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 }
 
 __global__ void
-find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, double *cost) {
+find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, double *cost, char *traceback) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -80,7 +81,7 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
                 double match = cost I(r, s - 1, d - 1) + patch_similarity;
                 double occlusion_src = cost I(r, s - 1, d) + occlusion_cost;
                 double occlusion_dst = cost I(r, s, d - 1) + occlusion_cost;
-                cost I(r, s, d) = min3(match, occlusion_src, occlusion_dst);
+                min3(match, occlusion_src, occlusion_dst, &cost I(r, s, d), &traceback I(r, s, d));
             }
         }
         __syncthreads();
@@ -88,7 +89,7 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
 }
 
 __global__ void
-traceback_correspondence(long rows, long cols_src, long cols_dst, const double *cost, long *correspondence, char *valid) {
+traceback_correspondence(long rows, long cols_src, long cols_dst, const double *cost, const char *traceback, long *correspondence, char *valid) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (r >= rows) return;
@@ -99,7 +100,7 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
         double match = cost I(r, s - 1, d - 1);
         double occlusion_src = cost I(r, s - 1, d);
         double occlusion_dst = cost I(r, s, d - 1);
-        long direction = argmin3(match, occlusion_src, occlusion_dst);
+        char direction = argmin3(match, occlusion_src, occlusion_dst);
         long us[] = {1, 1, 0}; 
         long ud[] = {1, 0, 1};
         s -= us[direction]; 
@@ -182,6 +183,8 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     double *pixel_similarity, *cost;
     cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(*pixel_similarity));
     cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(*cost));
+    char *traceback;
+    cudaMalloc(&traceback, rows * cols_src * cols_dst * sizeof(*traceback));
     long *correspondence_device; 
     cudaMalloc(&correspondence_device, rows * cols_src * sizeof(*correspondence_device));
     char *valid_device;
@@ -223,13 +226,13 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
-    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost);
+    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost, traceback);
 
     cudaEventRecord(events[6]);
 
     block = dim3(1, rows, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
-    traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, cost, correspondence_device, valid_device);
+    traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, cost, traceback, correspondence_device, valid_device);
 
     cudaEventRecord(events[7]);
 
@@ -239,6 +242,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaFree(src_device);
     cudaFree(dst_device);
     cudaFree(pixel_similarity);
+    cudaFree(traceback);
     cudaFree(cost);
     cudaFree(correspondence_device);
     cudaFree(valid_device);
