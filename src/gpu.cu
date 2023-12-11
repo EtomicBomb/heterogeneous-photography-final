@@ -71,6 +71,10 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
 
+    extern __shared__ double shared_memory[];
+    double *prev_prev = &shared_memory[0];
+    double *prev = &shared_memory[cols_src];
+    double *current = &shared_memory[2 * cols_src];
     /*
     if (r == 0) {
         printf("s=%ld %d %d %d\n", s, blockIdx.x, blockDim.x, threadIdx.x);
@@ -198,6 +202,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     CHECK(cudaMemset(valid_device, 0, rows * cols_src * sizeof(*valid_device)));
 
     dim3 block, grid;
+    long shared;
 
     size_t timing_event_count = 8;
     std::vector<cudaEvent_t> events(timing_event_count);
@@ -236,7 +241,8 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     CHECK(cudaMemset(iteration_count_d, 0, sizeof(double)));
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
-    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost, traceback, iteration_count_d);
+    shared = 3 * cols_src * sizeof(double);
+    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost, traceback, iteration_count_d);
     std::vector<char> host_costs(rows * cols_src * cols_dst);
     CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
     double total_costs = 0;
