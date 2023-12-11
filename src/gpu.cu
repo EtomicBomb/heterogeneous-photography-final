@@ -67,7 +67,7 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 }
 
 __global__ void
-find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, double *cost, char *traceback, double *total) {
+find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, char *traceback, double *total) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -80,14 +80,9 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
         long d = k - s;
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
             if (s == 0 || d == 0) {
-                cost I(r, s, d) = max(s, d) * occlusion_cost;
                 current[s] = max(s, d) * occlusion_cost;
             } else {
                 double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
-                //double match = cost I(r, s - 1, d - 1) + patch_similarity;
-                //double occlusion_src = cost I(r, s - 1, d) + occlusion_cost;
-                //double occlusion_dst = cost I(r, s, d - 1) + occlusion_cost;
-                //min3(match, occlusion_src, occlusion_dst, &cost I(r, s, d), &traceback I(r, s, d));
                 double match = prev_prev[s - 1] + patch_similarity;
                 double occlusion_src = prev[s - 1] + occlusion_cost;
                 double occlusion_dst = prev[s] + occlusion_cost;
@@ -196,8 +191,6 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     double *pixel_similarity;
     CHECK(cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(*pixel_similarity)));
-    double *cost;
-    CHECK(cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(*cost)));
     char *traceback;
     CHECK(cudaMalloc(&traceback, rows * cols_src * cols_dst * sizeof(*traceback)));
     long *correspondence_device; 
@@ -247,7 +240,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
     shared = 3 * cols_src * sizeof(double);
-    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost, traceback, iteration_count_d);
+    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, traceback, iteration_count_d);
     std::vector<char> host_costs(rows * cols_src * cols_dst);
     CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
     double total_costs = 0;
@@ -278,7 +271,6 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaFree(dst_device);
     cudaFree(pixel_similarity);
     cudaFree(traceback);
-    cudaFree(cost);
     cudaFree(correspondence_device);
     cudaFree(valid_device);
 
