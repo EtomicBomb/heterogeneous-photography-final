@@ -78,9 +78,9 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
             } else {
                 double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
                 double match = cost I(r, s - 1, d - 1) + patch_similarity;
-                double left = cost I(r, s, d - 1) + occlusion_cost;
-                double up = cost I(r, s - 1, d) + occlusion_cost;
-                cost I(r, s, d) = min3(match, left, up);
+                double occlusion_src = cost I(r, s - 1, d) + occlusion_cost;
+                double occlusion_dst = cost I(r, s, d - 1) + occlusion_cost;
+                cost I(r, s, d) = min3(match, occlusion_src, occlusion_dst);
             }
         }
         __syncthreads();
@@ -97,11 +97,11 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
     long d = cols_dst - 1;
     while (s != 0 && d != 0) { // yes
         double match = cost I(r, s - 1, d - 1);
-        double left = cost I(r, s, d - 1);
-        double up = cost I(r, s - 1, d);
-        long direction = argmin3(match, left, up);
-        long us[] = {1, 0, 1}; 
-        long ud[] = {1, 1, 0};
+        double occlusion_src = cost I(r, s - 1, d);
+        double occlusion_dst = cost I(r, s, d - 1);
+        long direction = argmin3(match, occlusion_src, occlusion_dst);
+        long us[] = {1, 1, 0}; 
+        long ud[] = {1, 0, 1};
         s -= us[direction]; 
         d -= ud[direction]; 
         correspondence Isrc(r, s) = d;
