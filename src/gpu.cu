@@ -97,7 +97,7 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
 }
 
 __global__ void
-traceback_correspondence(long rows, long cols_src, long cols_dst, const double *cost, const char *traceback, long *correspondence, char *valid) {
+traceback_correspondence(long rows, long cols_src, long cols_dst, const char *traceback, long *correspondence, char *valid) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (r >= rows) return;
@@ -105,11 +105,7 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
     long s = cols_src - 1;
     long d = cols_dst - 1;
     while (s != 0 && d != 0) { // yes
-        double match = cost I(r, s - 1, d - 1);
-        double occlusion_src = cost I(r, s - 1, d);
-        double occlusion_dst = cost I(r, s, d - 1);
-        long direction = argmin3(match, occlusion_src, occlusion_dst);
-        direction = traceback I(r, s, d);
+        long direction = traceback I(r, s, d);
         long us[] = {1, 1, 0}; 
         long ud[] = {1, 0, 1};
         s -= us[direction]; 
@@ -260,7 +256,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     block = dim3(1, rows, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
-    traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, cost, traceback, correspondence_device, valid_device);
+    traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, traceback, correspondence_device, valid_device);
 
     cudaEventRecord(events[7]);
 
