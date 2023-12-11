@@ -75,27 +75,32 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
     double *prev_prev = &shared_memory[0];
     double *prev = &shared_memory[cols_src];
     double *current = &shared_memory[2 * cols_src];
-    /*
-    if (r == 0) {
-        printf("s=%ld %d %d %d\n", s, blockIdx.x, blockDim.x, threadIdx.x);
-    }
-    */
+
     for (long k = 0; k < cols_src + cols_dst; k++) {
         long d = k - s;
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
             if (s == 0 || d == 0) {
                 cost I(r, s, d) = max(s, d) * occlusion_cost;
+                current[s] = max(s, d) * occlusion_cost;
             } else {
                 double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
-                double match = cost I(r, s - 1, d - 1) + patch_similarity;
-                double occlusion_src = cost I(r, s - 1, d) + occlusion_cost;
-                double occlusion_dst = cost I(r, s, d - 1) + occlusion_cost;
-                min3(match, occlusion_src, occlusion_dst, &cost I(r, s, d), &traceback I(r, s, d));
+                //double match = cost I(r, s - 1, d - 1) + patch_similarity;
+                //double occlusion_src = cost I(r, s - 1, d) + occlusion_cost;
+                //double occlusion_dst = cost I(r, s, d - 1) + occlusion_cost;
+                //min3(match, occlusion_src, occlusion_dst, &cost I(r, s, d), &traceback I(r, s, d));
+                double match = prev_prev[s - 1] + patch_similarity;
+                double occlusion_src = prev[s - 1] + occlusion_cost;
+                double occlusion_dst = prev[s] + occlusion_cost;
+                min3(match, occlusion_src, occlusion_dst, &current[s], &traceback I(r, s, d));
                 if (r == 180) {
                     atomicAdd(total, traceback I (r, s, d));
                 }
             }
         }
+        double *new_current = prev_prev;
+        prev_prev = prev;
+        prev = current;
+        current = new_current;
         __syncthreads();
     }
 }
