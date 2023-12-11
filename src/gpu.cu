@@ -28,8 +28,8 @@ __device__ inline void
 min3(double x, double y, double z, double *min, char *argmin) {
     double numbers[] = {x, y, z};
     char index = argmin3(x, y, z);
-    *argmin = index;
     *min = numbers[index];
+    *argmin = index;
 }
 
 // [ ] thread block nonmultiple edge case
@@ -67,10 +67,15 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 }
 
 __global__ void
-find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, double *cost, char *traceback) {
+find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, double *cost, char *traceback, double *total) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
 
+    /*
+    if (r == 0) {
+        printf("s=%ld %d %d %d\n", s, blockIdx.x, blockDim.x, threadIdx.x);
+    }
+    */
     for (long k = 0; k < cols_src + cols_dst; k++) {
         long d = k - s;
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
@@ -82,6 +87,9 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
                 double occlusion_src = cost I(r, s - 1, d) + occlusion_cost;
                 double occlusion_dst = cost I(r, s, d - 1) + occlusion_cost;
                 min3(match, occlusion_src, occlusion_dst, &cost I(r, s, d), &traceback I(r, s, d));
+                if (r == 180) {
+                    atomicAdd(total, traceback I (r, s, d));
+                }
             }
         }
         __syncthreads();
@@ -100,7 +108,8 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
         double match = cost I(r, s - 1, d - 1);
         double occlusion_src = cost I(r, s - 1, d);
         double occlusion_dst = cost I(r, s, d - 1);
-        char direction = argmin3(match, occlusion_src, occlusion_dst);
+        long direction = argmin3(match, occlusion_src, occlusion_dst);
+        //direction = traceback I(r, s, d);
         long us[] = {1, 1, 0}; 
         long ud[] = {1, 0, 1};
         s -= us[direction]; 
@@ -167,29 +176,30 @@ cumulative_sum_rows(long rows, long cols_src, long cols_dst, double *array) {
 extern "C" int
 scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings) {
     int ncuda_devices = 0;
-    cudaGetDeviceCount(&ncuda_devices);
+    CHECK(cudaGetDeviceCount(&ncuda_devices));
     if (ncuda_devices == 0) {
         return -1;
     }
     cudaSetDevice(0);
 
     double *src_device;
-    cudaMalloc(&src_device, rows * cols_src * sizeof(*src_device));
-    cudaMemcpy(src_device, src, rows * cols_src * sizeof(*src_device), cudaMemcpyHostToDevice);
+    CHECK(cudaMalloc(&src_device, rows * cols_src * sizeof(*src_device)));
+    CHECK(cudaMemcpy(src_device, src, rows * cols_src * sizeof(*src_device), cudaMemcpyHostToDevice));
     double *dst_device;
-    cudaMalloc(&dst_device, rows * cols_dst * sizeof(*dst_device));
-    cudaMemcpy(dst_device, dst, rows * cols_dst * sizeof(*dst_device), cudaMemcpyHostToDevice);
+    CHECK(cudaMalloc(&dst_device, rows * cols_dst * sizeof(*dst_device)));
+    CHECK(cudaMemcpy(dst_device, dst, rows * cols_dst * sizeof(*dst_device), cudaMemcpyHostToDevice));
 
-    double *pixel_similarity, *cost;
-    cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(*pixel_similarity));
-    cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(*cost));
+    double *pixel_similarity;
+    CHECK(cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(*pixel_similarity)));
+    double *cost;
+    CHECK(cudaMalloc(&cost, rows * cols_src * cols_dst * sizeof(*cost)));
     char *traceback;
-    cudaMalloc(&traceback, rows * cols_src * cols_dst * sizeof(*traceback));
+    CHECK(cudaMalloc(&traceback, rows * cols_src * cols_dst * sizeof(*traceback)));
     long *correspondence_device; 
-    cudaMalloc(&correspondence_device, rows * cols_src * sizeof(*correspondence_device));
+    CHECK(cudaMalloc(&correspondence_device, rows * cols_src * sizeof(*correspondence_device)));
     char *valid_device;
-    cudaMalloc(&valid_device, rows * cols_src * sizeof(*valid_device));
-    cudaMemset(&valid_device, 0, rows * cols_src * sizeof(*valid_device));
+    CHECK(cudaMalloc(&valid_device, rows * cols_src * sizeof(*valid_device)));
+    CHECK(cudaMemset(valid_device, 0, rows * cols_src * sizeof(*valid_device)));
 
     dim3 block, grid;
 
@@ -223,10 +233,28 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cumulative_sum_cols_dst<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
 
     cudaEventRecord(events[4]);
-
+    
+    CHECK(cudaMemset(traceback, 0, rows * cols_src * sizeof(*traceback)));
+    double *iteration_count_d;
+    CHECK(cudaMalloc(&iteration_count_d, sizeof(double)));
+    CHECK(cudaMemset(iteration_count_d, 0, sizeof(double)));
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
-    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost, traceback);
+    find_costs<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, cost, traceback, iteration_count_d);
+    std::vector<char> host_costs(rows * cols_src * cols_dst);
+    CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
+    double total_costs = 0;
+    for (long r = 0; r < rows; r++) {
+        for (long s = 0; s < cols_src; s++) {
+            for (long d = 0; d < cols_dst; d++) {
+                total_costs += host_costs.data() I(r, s, d);
+            }
+        }
+    }
+    double iteration_count;
+    CHECK(cudaMemcpy(&iteration_count, iteration_count_d, sizeof(double), cudaMemcpyDeviceToHost));
+    CHECK(cudaFree(iteration_count_d));
+    printf("total cost gpu: %.17g %.17g\n", total_costs, iteration_count);
 
     cudaEventRecord(events[6]);
 
