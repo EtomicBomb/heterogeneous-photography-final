@@ -8,10 +8,10 @@ run-gpu: target/cpu.so target/gpu.so
 	python3 src/main.py
 
 test: target/cpu.so target/gpu.so
-	python3 -m pytest src/test_scanline_stereo.py
+	python3 -m pytest -s src/test_scanline_stereo.py
 
-testing: target/cpu.so target/gpu.so
-	python3 src/testing.py
+performance: target/cpu.so target/gpu.so
+	python3 src/performance.py
 
 target/cpu.so: src/cpu.cpp
 	g++ $< ${ccflags} -o $@

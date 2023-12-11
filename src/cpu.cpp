@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <omp.h>
 #include <complex>
 #include <cmath>
 #include <cstring>
@@ -179,11 +180,13 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
 }
 
 extern "C" int
-scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings) {
+scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings, int num_threads) {
     std::vector<double> pixel_similarity(rows * cols_src * cols_dst);
     std::vector<double> patch_similarity(rows * cols_src * cols_dst);
     std::vector<double> cost(rows * cols_src * cols_dst);
     std::memset(valid, 0, rows * cols_src * sizeof(*valid));
+
+    omp_set_num_threads(num_threads);
 
     std::chrono::high_resolution_clock::time_point start;
     std::chrono::high_resolution_clock::time_point stop;

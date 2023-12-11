@@ -54,9 +54,9 @@ def scanline_stereo_gpu(src, dst, patch_size, occlusion_cost):
 
 _cpu = ctypeslib.load_library('target/cpu', '.')
 _cpu.scanline_stereo.restype = ctypes.c_int
-_cpu.scanline_stereo.argtypes = scanline_stereo_argtypes
+_cpu.scanline_stereo.argtypes = [*scanline_stereo_argtypes, ctypes.c_int]
 
-def scanline_stereo_cpu(src, dst, patch_size, occlusion_cost):
+def scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_threads):
     rows, cols_src = np.shape(src)
     rows_dst, cols_dst = np.shape(dst)
     assert rows == rows_dst
@@ -65,6 +65,6 @@ def scanline_stereo_cpu(src, dst, patch_size, occlusion_cost):
     correspondance = np.zeros((rows, cols_src), dtype=np.int_)
     valid = np.zeros((rows, cols_src), dtype=np.byte)
     timings = np.zeros((7,), dtype=np.float32)
-    ok = _cpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
+    ok = _cpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings, num_threads)
     assert ok >= 0
     return correspondance, valid, timings

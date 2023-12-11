@@ -1,13 +1,10 @@
-import sys
+import pytest
 import numpy as np
 from skimage import data, transform, util, color, measure, feature, registration
 from skimage import io as skimage_io
 import io
-import time
-from scipy import io as scipy_io
 
 from bindings import *
-
 
 def performance_statistics():
     src = skimage_io.imread('inputs/Bowling1/view1.png')
