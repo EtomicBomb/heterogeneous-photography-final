@@ -109,7 +109,7 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
         double occlusion_src = cost I(r, s - 1, d);
         double occlusion_dst = cost I(r, s, d - 1);
         long direction = argmin3(match, occlusion_src, occlusion_dst);
-        //direction = traceback I(r, s, d);
+        direction = traceback I(r, s, d);
         long us[] = {1, 1, 0}; 
         long ud[] = {1, 0, 1};
         s -= us[direction]; 

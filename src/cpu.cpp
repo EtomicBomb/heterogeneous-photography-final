@@ -149,12 +149,12 @@ calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, 
                 for (long s = s_low; s < s_high; s++) {
                     long d = k - s;
                     double match = cost I(r, s - 1, d - 1) + patch_similarity I(r, s, d);
-                    double left = cost I(r, s, d - 1) + occlusion_cost;
-                    double up = cost I(r, s - 1, d) + occlusion_cost;
+                    double left = cost I(r, s - 1, d) + occlusion_cost;
+                    double up = cost I(r, s, d - 1) + occlusion_cost;
                     min3(match, left, up, &cost I(r, s, d), &traceback I(r, s, d));
                     if (r == 180) {
                         int argmin = traceback I(r, s, d);
-                        argmin = argmin > 0 ? 3 - argmin : 0;
+                        //argmin = argmin > 0 ? 3 - argmin : 0;
                         #pragma omp critical
                         count += argmin;
                     }
@@ -173,12 +173,12 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
         long d = cols_dst - 1;
         while (s != 0 && d != 0) { // yes
             double match = cost I(r, s - 1, d - 1);
-            double left = cost I(r, s, d - 1);
-            double up = cost I(r, s - 1, d);
+            double left = cost I(r, s - 1, d);
+            double up = cost I(r, s, d - 1);
             long direction = argmin3(match, left, up);
-            //direction = traceback I(r, s, d);
-            long us[] = {1, 0, 1}; 
-            long ud[] = {1, 1, 0};
+            direction = traceback I(r, s, d);
+            long us[] = {1, 1, 0}; 
+            long ud[] = {1, 0, 1};
             s -= us[direction]; 
             d -= ud[direction]; 
             correspondence Isrc(r, s) = d;
