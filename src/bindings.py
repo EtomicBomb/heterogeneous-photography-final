@@ -34,7 +34,7 @@ def scanline_stereo_gpu(src, dst, patch_size, occlusion_cost):
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
     correspondance = np.zeros((rows, cols_src), dtype=np.int_)
     valid = np.zeros((rows, cols_src), dtype=np.byte)
-    timings = np.zeros((7,), dtype=np.float32)
+    timings = np.zeros((6,), dtype=np.float32)
     ok = _gpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
     assert ok >= 0
     return correspondance, valid, timings

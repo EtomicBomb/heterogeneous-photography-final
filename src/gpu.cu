@@ -40,7 +40,7 @@ min3(double x, double y, double z, double *min, char *argmin) {
 // only process some subset of the rows at once to limit our memory usage
 // parallelize cumulative sum functions? not sure if that's needed
 
-__device__ double
+__device__ inline double
 get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, const double *pixel_similarity, long r, long s, long d) {
     long rm = r - patch_size - 1;
     long sm = s - patch_size - 1;
@@ -69,28 +69,26 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 __global__ void
 find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, char *traceback) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
-    long s = blockIdx.x * blockDim.x + threadIdx.x;
+    long s = threadIdx.x;
 
     extern __shared__ double shared_memory[];
     double *prev_prev = &shared_memory[0 * (cols_src + 1)];
     double *prev = &shared_memory[1 * (cols_src + 1)];
     double *current = &shared_memory[2 * (cols_src + 1)];
-    prev_prev[s] = INFINITY;
-    prev[s] = INFINITY;
-    current[s] = INFINITY;
+    if (s == 0) {
+        prev_prev[0] = prev[0] = current[0] = INFINITY;
+    }
+    prev_prev[s + 1] = prev[s + 1] = current[s + 1] = INFINITY;
 
     for (long k = 0; k < cols_src + cols_dst; k++) {
         long d = k - s;
         __syncthreads();
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
             double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
-            double match = s == 0 ? INFINITY : prev_prev[s - 1] + patch_similarity;
-            double occlusion_src = d == 0 ? s * occlusion_cost : INFINITY;
-            double occlusion_dst = s == 0 ? d * occlusion_cost : prev[s] + occlusion_cost;
-            if (s > 0) {
-                occlusion_src = prev[s - 1] + occlusion_cost;
-            }
-            min3(match, occlusion_src, occlusion_dst, &current[s], &traceback I(r, s, d));
+            double match = prev_prev[s] + patch_similarity;
+            double occlusion_src = d == 0 ? s * occlusion_cost : prev[s] + occlusion_cost;
+            double occlusion_dst = s == 0 ? d * occlusion_cost : prev[s + 1] + occlusion_cost;
+            min3(match, occlusion_src, occlusion_dst, &current[s + 1], &traceback I(r, s, d));
         }
         double *new_current = prev_prev;
         prev_prev = prev;
@@ -201,7 +199,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     dim3 block, grid;
     long shared;
 
-    size_t timing_event_count = 8;
+    size_t timing_event_count = 7;
     std::vector<cudaEvent_t> events(timing_event_count);
     for (cudaEvent_t& event : events) {
         cudaEventCreate(&event);
@@ -232,30 +230,30 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     cudaEventRecord(events[4]);
     
-    CHECK(cudaMemset(traceback, 0, rows * cols_src * sizeof(*traceback)));
+    //CHECK(cudaMemset(traceback, 0, rows * cols_src * sizeof(*traceback)));
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
     shared = 3 * (cols_src + 1) * sizeof(double);
     find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, traceback);
-    std::vector<char> host_costs(rows * cols_src * cols_dst);
-    CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
-    double total_costs = 0;
-    for (long r = 0; r < rows; r++) {
-        for (long s = 0; s < cols_src; s++) {
-            for (long d = 0; d < cols_dst; d++) {
-                total_costs += host_costs.data() I(r, s, d);
-            }
-        }
-    }
-    printf("total cost gpu: %.17g\n", total_costs);
+    //std::vector<char> host_costs(rows * cols_src * cols_dst);
+    //CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
+    //double total_costs = 0;
+    //for (long r = 0; r < rows; r++) {
+        //for (long s = 0; s < cols_src; s++) {
+            //for (long d = 0; d < cols_dst; d++) {
+                //total_costs += host_costs.data() I(r, s, d);
+            //}
+        //}
+    //}
+    //printf("total cost gpu: %.17g\n", total_costs);
 
-    cudaEventRecord(events[6]);
+    cudaEventRecord(events[5]);
 
     block = dim3(1, rows, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
     traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, traceback, correspondence_device, valid_device);
 
-    cudaEventRecord(events[7]);
+    cudaEventRecord(events[6]);
 
     CHECK(cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(*correspondence), cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost));
