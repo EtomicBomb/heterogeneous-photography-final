@@ -230,22 +230,10 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     cudaEventRecord(events[4]);
     
-    //CHECK(cudaMemset(traceback, 0, rows * cols_src * sizeof(*traceback)));
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
     shared = 3 * (cols_src + 1) * sizeof(double);
     find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, traceback);
-    //std::vector<char> host_costs(rows * cols_src * cols_dst);
-    //CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
-    //double total_costs = 0;
-    //for (long r = 0; r < rows; r++) {
-        //for (long s = 0; s < cols_src; s++) {
-            //for (long d = 0; d < cols_dst; d++) {
-                //total_costs += host_costs.data() I(r, s, d);
-            //}
-        //}
-    //}
-    //printf("total cost gpu: %.17g\n", total_costs);
 
     cudaEventRecord(events[5]);
 

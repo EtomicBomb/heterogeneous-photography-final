@@ -124,7 +124,6 @@ calculate_patch_similarity(long rows, long cols_src, long cols_dst, long patch_s
 
 void
 calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, const double *patch_similarity, double *cost, char *traceback) {
-    double count = 0;
     #pragma omp parallel 
     {
         #pragma omp for collapse(2) nowait
@@ -152,17 +151,10 @@ calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, 
                     double left = cost I(r, s - 1, d) + occlusion_cost;
                     double up = cost I(r, s, d - 1) + occlusion_cost;
                     min3(match, left, up, &cost I(r, s, d), &traceback I(r, s, d));
-                    if (r == 180) {
-                        int argmin = traceback I(r, s, d);
-                        //argmin = argmin > 0 ? 3 - argmin : 0;
-                        #pragma omp critical
-                        count += argmin;
-                    }
                 }
             }
         }
     }
-    printf("total number of iterations: %.17g\n", count);
 }
 
 void
@@ -234,18 +226,6 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     start = stop;
 
     calculate_costs(rows, cols_src, cols_dst, occlusion_cost, patch_similarity.data(), cost.data(), traceback.data());
-
-    double total_costs = 0;
-    for (long r = 0; r < rows; r++) {
-        for (long s = 0; s < cols_src; s++) {
-            for (long d = 0; d < cols_dst; d++) {
-                int argmin = traceback I(r, s, d);
-                argmin = argmin > 0 ? 3 - argmin : 0;
-                total_costs += argmin;
-            }
-        }
-    }
-    printf("total cost: %.17g (%ld %ld %ld)\n", total_costs, rows, cols_src, cols_dst);
 
     stop = std::chrono::high_resolution_clock::now();
     timings[6] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
