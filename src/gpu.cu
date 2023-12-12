@@ -80,7 +80,7 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
     }
     prev_prev[s + 1] = prev[s + 1] = current[s + 1] = INFINITY;
 
-    for (long k = 0; k < cols_src + cols_dst; k++) {
+    for (long k = 0; k < cols_src + cols_dst - 1; k++) {
         long d = k - s;
         __syncthreads();
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
