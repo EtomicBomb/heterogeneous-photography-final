@@ -249,7 +249,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     cudaEventRecord(events[5]);
 
-    block = dim3(1, rows, 1);
+    block = dim3(1, 1024, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
     traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, traceback, correspondence_device, valid_device);
 
