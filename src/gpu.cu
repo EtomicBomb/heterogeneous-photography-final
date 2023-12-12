@@ -254,7 +254,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaFree(valid_device);
 
     for (size_t i = 1; i < timing_event_count; i++) {
-        cudaEventElapsedTime(&timings[i-1], events[0], events[i]);
+        cudaEventElapsedTime(&timings[i-1], events[i - 1], events[i]);
     }
 
     return 0;
