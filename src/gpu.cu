@@ -67,36 +67,35 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 }
 
 __global__ void
-find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, char *traceback, double *total) {
+find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, char *traceback) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = blockIdx.x * blockDim.x + threadIdx.x;
 
     extern __shared__ double shared_memory[];
-    double *prev_prev = &shared_memory[0];
-    double *prev = &shared_memory[cols_src];
-    double *current = &shared_memory[2 * cols_src];
+    double *prev_prev = &shared_memory[0 * (cols_src + 1)];
+    double *prev = &shared_memory[1 * (cols_src + 1)];
+    double *current = &shared_memory[2 * (cols_src + 1)];
+    prev_prev[s] = INFINITY;
+    prev[s] = INFINITY;
+    current[s] = INFINITY;
 
     for (long k = 0; k < cols_src + cols_dst; k++) {
         long d = k - s;
+        __syncthreads();
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
-            if (s == 0 || d == 0) {
-                current[s] = max(s, d) * occlusion_cost;
-            } else {
-                double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
-                double match = prev_prev[s - 1] + patch_similarity;
-                double occlusion_src = prev[s - 1] + occlusion_cost;
-                double occlusion_dst = prev[s] + occlusion_cost;
-                min3(match, occlusion_src, occlusion_dst, &current[s], &traceback I(r, s, d));
-                if (r == 180) {
-                    atomicAdd(total, traceback I (r, s, d));
-                }
+            double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
+            double match = s == 0 ? INFINITY : prev_prev[s - 1] + patch_similarity;
+            double occlusion_src = d == 0 ? s * occlusion_cost : INFINITY;
+            double occlusion_dst = s == 0 ? d * occlusion_cost : prev[s] + occlusion_cost;
+            if (s > 0) {
+                occlusion_src = prev[s - 1] + occlusion_cost;
             }
+            min3(match, occlusion_src, occlusion_dst, &current[s], &traceback I(r, s, d));
         }
         double *new_current = prev_prev;
         prev_prev = prev;
         prev = current;
         current = new_current;
-        __syncthreads();
     }
 }
 
@@ -234,13 +233,10 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaEventRecord(events[4]);
     
     CHECK(cudaMemset(traceback, 0, rows * cols_src * sizeof(*traceback)));
-    double *iteration_count_d;
-    CHECK(cudaMalloc(&iteration_count_d, sizeof(double)));
-    CHECK(cudaMemset(iteration_count_d, 0, sizeof(double)));
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
-    shared = 3 * cols_src * sizeof(double);
-    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, traceback, iteration_count_d);
+    shared = 3 * (cols_src + 1) * sizeof(double);
+    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, traceback);
     std::vector<char> host_costs(rows * cols_src * cols_dst);
     CHECK(cudaMemcpy(host_costs.data(), traceback, rows * cols_src * cols_dst * sizeof(*host_costs.data()), cudaMemcpyDeviceToHost));
     double total_costs = 0;
@@ -251,10 +247,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
             }
         }
     }
-    double iteration_count;
-    CHECK(cudaMemcpy(&iteration_count, iteration_count_d, sizeof(double), cudaMemcpyDeviceToHost));
-    CHECK(cudaFree(iteration_count_d));
-    printf("total cost gpu: %.17g %.17g\n", total_costs, iteration_count);
+    printf("total cost gpu: %.17g\n", total_costs);
 
     cudaEventRecord(events[6]);
 

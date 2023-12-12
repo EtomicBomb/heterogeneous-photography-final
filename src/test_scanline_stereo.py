@@ -20,9 +20,10 @@ def test_one():
     patch_size = 10
     occlusion_cost = 0.01
     num_cpu_threads = 32
-    correspondence1, valid1, timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_cpu_threads)
-    correspondence0, valid0, _ = scanline_stereo_gpu(src, dst, patch_size, occlusion_cost)
-    print(timings)
+    correspondence1, valid1, cpu_timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_cpu_threads)
+    correspondence0, valid0, gpu_timings = scanline_stereo_gpu(src, dst, patch_size, occlusion_cost)
+    print('cpu timings', cpu_timings)
+    print('gpu timings', gpu_timings)
     assert np.allclose(valid0, valid1)
     assert np.allclose(correspondence0, correspondence1)
 
