@@ -10,7 +10,7 @@ import imageio.v3 as iio
 import io
 import time
 
-import bindings
+from bindings import *
     
 # 2 matrices of floats (images)
 def foo(src, dst):
@@ -147,11 +147,21 @@ def estimate_model(src, dst, coords_src, coords_dst):
 #             dst = util.img_as_float32(dst)
 #             yield src, dst
 
-# def stream_two_camera():
-#     src = iio.imiter('<video0>', size='320x180')
-#     dst = iio.imiter('<video2>', size='320x180')
-#     for src, dst in zip(src, dst):
-#         yield src, dst
+def stream_two_camera():
+    src = iio.imiter('<video0>', size='320x180')
+    dst = iio.imiter('<video2>', size='320x180')
+    for src, dst in zip(src, dst):
+        yield src, dst
+
+def stream_two_still():
+    src = iio.imread('inputs/Rocks2/view1.png')
+    dst = iio.imread('inputs/Rocks2/view5.png')
+    src = util.img_as_float32(src)
+    dst = util.img_as_float32(dst)
+#     src = src[:,:,:3]
+#     dst = dst[:,:,:3]
+    while True:
+        yield src, dst
 
 def stream_dummy():
     def recompress(frame):
@@ -179,37 +189,7 @@ def stream_dummy():
         dst = util.img_as_float32(recompress(util.img_as_ubyte(np.clip(dst, 0, 1))))
         yield src, dst
 
-def rectify(src, dst, max_ratio):
-    src_gray = color.rgb2gray(src)
-    dst_gray = color.rgb2gray(dst)
 
-    extractor_src = feature.SIFT()
-    extractor_src.detect_and_extract(src_gray)
-    extractor_dst = feature.SIFT()
-    extractor_dst.detect_and_extract(dst_gray)
-
-    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True, max_ratio=max_ratio)
-    
-    points_left = extractor_src.keypoints[matches[:, 0]]
-    points_right = extractor_dst.keypoints[matches[:, 1]]
-
-    F, mask = cv2.findFundamentalMat(points_left, points_right)
-    # F, mask = cv2.findFundamentalMat(points_left, points_right, cv2.FM_RANSAC, ransacReprojThreshold=1, confidence=0.99)
-
-    print(np.linalg.eigvals(F))
-
-    # F, inliers = measure.ransac((points_left, points_right),
-    #                         transform.FundamentalMatrixTransform, 
-    #                         min_samples=8,
-    #                         residual_threshold=1, 
-    #                         max_trials=5000,
-    #                         random_state=np.random.default_rng(seed=9)) # row, col -> row, col
-    success, h1, h2 =cv2.stereoRectifyUncalibrated(points_left, points_right, F, src_gray.shape)
-    assert(success)
-    # h1 = transform.ProjectiveTransform(matrix=h1)
-    # h2 = transform.ProjectiveTransform(matrix=h2)
-
-    return h1, h2
 def corresponding_coordinates(src, dst, max_ratio):
     src_gray = color.rgb2gray(src)
     dst_gray = color.rgb2gray(dst)
@@ -282,8 +262,12 @@ class Demo:
         self.dst_points.axes.set_axis_off()
 
         ax = fig.add_subplot(gs[-1, 2])
-        self.slider = widgets.Slider(ax, 'hello', 0, 1, valinit=0.3)
-        self.slider.on_changed(self.slider_update)
+        self.patch_size = widgets.Slider(ax, 'patch size', 1, 50, valinit=25)
+        self.patch_size.on_changed(self.slider_update)
+
+        ax = fig.add_subplot(gs[-2, 2])
+        self.occlusion_cost = widgets.Slider(ax, 'occlusion cost', 0, 1, valinit=0.02)
+        self.occlusion_cost.on_changed(self.slider_update)
 
         ax = fig.add_subplot(gs[-1, 1])
         self.textbox = widgets.TextBox(ax, 'world', initial='')
@@ -310,33 +294,142 @@ class Demo:
         
         if self.needs_calibration:
             self.needs_calibration = False
-            self.coords_src, self.coords_dst = corresponding_coordinates(src, dst, 1.0)
-            self.h1, self.h2 = rectify(src, dst, 0.4)
+#             self.coords_src, self.coords_dst = corresponding_coordinates(src, dst, 1.0)
+#             self.h1, self.h2 = rectify(src, dst, 0.4)
 
-        src_rectify = cv2.warpPerspective(src, self.h1, np.shape(src)[:2])
-        dst_rectify = cv2.warpPerspective(src, self.h2, np.shape(src)[:2])
+#         src_rectify = cv2.warpPerspective(src, self.h1, np.shape(src)[:2])
+#         dst_rectify = cv2.warpPerspective(src, self.h2, np.shape(src)[:2])
+#         self.src_points.set_array(util.img_as_ubyte(src_rectify))
+#         self.dst_points.set_array(util.img_as_ubyte(dst_rectify))
 
-        # src_rectify = transform.warp(src, self.h1, output_shape=None, order=None, cval=0.0)
-        # dst_rectify = transform.warp(dst, self.h2, output_shape=None, order=None, cval=0.0)
+        patch_size = np.int_(self.patch_size.val)
+        occlusion_cost = self.occlusion_cost.val
+        num_threads = 8
+        src_gray = color.rgb2gray(src)
+        dst_gray = color.rgb2gray(dst)
+        correspondence, valid, timings = scanline_stereo_cpu(src_gray, dst_gray, patch_size, occlusion_cost, num_threads)
+        valid = np.expand_dims(valid, -1)
+        correspondence = np.arange(src_gray.shape[1]) - correspondence
+        correspondence = np.expand_dims(correspondence, -1) * [1.0, 1.0, 1.0]
+        correspondence = (correspondence - np.min(correspondence)) / np.ptp(correspondence)
+        self.src_points.set_array(util.img_as_ubyte(np.ones_like(src) * valid))
+        self.dst_points.set_array(util.img_as_ubyte(correspondence * [1.0, 1.0, 1.0]))
 
-
-        output = estimate_model(src, dst, self.coords_src, self.coords_dst)
+#         output = estimate_model(src, dst, self.coords_src, self.coords_dst)
 #         output = src
 
-#         src[self.coords_src[0,:], self.coords_src[1,:], :] = [1.0, 0, 0]
-#         dst[self.coords_dst[0,:], self.coords_dst[1,:], :] = [1.0, 0, 0]
-        
         self.src_widget.set_array(util.img_as_ubyte(src))
         self.dst_widget.set_array(util.img_as_ubyte(dst))
-        self.output_widget.set_array(util.img_as_ubyte(output))
-
-        self.src_points.set_array(util.img_as_ubyte(src_rectify))
-        self.dst_points.set_array(util.img_as_ubyte(dst_rectify))
+        self.output_widget.set_array(util.img_as_ubyte(src))
 
         return [self.src_widget, self.dst_widget, self.output_widget, self.src_points, self.dst_points]
 
-stereo_pair_test()
-# Demo(stream_dummy())
+def rectify(src, dst, max_ratio):
+#     sift = cv2.SIFT_create()
+#     kp1, des1 = sift.detectAndCompute(src, None)
+#     kp2, des2 = sift.detectAndCompute(dst, None)
+#     matches = feature.match_descriptors(des1, des2, cross_check=True, max_ratio=max_ratio)
+#     print(len(matches))
+#     kp1 = np.array([p.pt for p in kp1])
+#     kp2 = np.array([p.pt for p in kp2])
+#     print(kp1)
+#     points_left = kp1[matches[:, 0]]
+#     points_right = kp2[matches[:, 1]]
+
+    extractor_src = feature.SIFT()
+    extractor_src.detect_and_extract(src_gray)
+    extractor_dst = feature.SIFT()
+    extractor_dst.detect_and_extract(dst_gray)
+    matches = feature.match_descriptors(extractor_src.descriptors, extractor_dst.descriptors, cross_check=True, max_ratio=max_ratio)
+    points_left = np.fliplr(extractor_src.keypoints[matches[:, 0]])
+    points_right = np.fliplr(extractor_dst.keypoints[matches[:, 1]])
+
+    F, mask = cv2.findFundamentalMat(points_left, points_right)
+#     F, mask = cv2.findFundamentalMat(points_left, points_right, cv2.FM_RANSAC, ransacReprojThreshold=1, confidence=0.99)
+
+#     F, inliers = measure.ransac((points_left, points_right),
+#                             transform.FundamentalMatrixTransform, 
+#                             min_samples=8,
+#                             residual_threshold=1, 
+#                             max_trials=5000,
+#                             random_state=np.random.default_rng(seed=9)) # row, col -> row, col
+#     F = F.params
+
+    success, h1, h2 = cv2.stereoRectifyUncalibrated(points_left, points_right, F, src_gray.shape)
+    assert success
+
+    src_rectify = cv2.warpPerspective(src, h1, np.flip(np.shape(src)[:2]))
+    dst_rectify = cv2.warpPerspective(dst, h2, np.flip(np.shape(dst)[:2]))
+    h1 = transform.ProjectiveTransform(matrix=h1)
+    h2 = transform.ProjectiveTransform(matrix=h2)
+    src_rectify0 = transform.warp(src, h1.inverse, output_shape=None, order=None, cval=0.0)
+    dst_rectify0 = transform.warp(dst, h2.inverse, output_shape=None, order=None, cval=0.0)
+
+    fig, axs = plt.subplots(2, 3)
+    axs = np.ravel(axs)
+    feature.plot_matches(axs[0], src, dst, extractor_src.keypoints, extractor_dst.keypoints, matches)
+    axs[1].imshow(src_rectify)
+    axs[2].imshow(dst_rectify)
+    axs[3].imshow(src_rectify0)
+    axs[4].imshow(dst_rectify0)
+    plt.show()
+
+    return src_rectify0, dst_rectify0
+
+def rectify_demo(left, right):
+    left_gray = color.rgb2gray(left)
+    right_gray = color.rgb2gray(right)
+    left_gray = util.img_as_ubyte(left_gray)
+    right_gray = util.img_as_ubyte(right_gray)
+
+    sift = cv2.SIFT_create()
+    keypoints_left, descriptors_left = sift.detectAndCompute(left_gray, None)
+    keypoints_right, descriptors_right = sift.detectAndCompute(right_gray, None)
+
+    bf = cv2.BFMatcher(cv2.NORM_L1)
+    matches = bf.knnMatch(descriptors_left, descriptors_right, k=2)
+
+    good_matches = [m for m, n in matches if m.distance < 0.18 * n.distance]
+
+    source_points = np.float32([keypoints_left[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    destination_points = np.float32([keypoints_right[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+    F, mask = cv2.findFundamentalMat(source_points, destination_points, cv2.FM_RANSAC, 5.0)
+
+    image_size = np.flip(left_gray.shape[:2])
+
+    success, H1, H2 = cv2.stereoRectifyUncalibrated(source_points, destination_points, F, image_size)
+    assert success
+
+    rectified_left = cv2.warpPerspective(left, H1, image_size)
+    rectified_right = cv2.warpPerspective(right, H2, image_size)
+
+    fig, axs = plt.subplots(1, 2)
+    axs[0].imshow(rectified_left)
+    axs[1].imshow(rectified_right)
+    plt.show()
+
+    return rectified_left, rectified_right
+
+# left = iio.imread('inputs/Rocks2/view1.png')
+# right = iio.imread('inputs/Rocks2/view5.png')
+# print(rectify(left, right, 0.6))
+# print(rectify_demo(left, right))
+# src_small = color.rgb2gray(left)
+# dst_small = color.rgb2gray(right)
+# patch_size = 10
+# occlusion_cost = 0.01
+# num_threads = 8
+# correspondence, valid, timings = scanline_stereo_cpu(src_small, dst_small, patch_size, occlusion_cost, num_threads)
+# fig, axs = plt.subplots(2, 2)
+# axs = np.ravel(axs)
+# axs[0].imshow(np.arange(src_small.shape[1]) - correspondence, cmap='Greys', vmin=10, vmax=60)
+# axs[1].imshow(valid)
+# axs[2].imshow(left)
+# axs[3].imshow(right)
+# plt.show()
+
+Demo(stream_two_still())
 
 
 #             

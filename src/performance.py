@@ -3,6 +3,7 @@ import numpy as np
 from skimage import data, transform, util, color, measure, feature, registration
 from skimage import io as skimage_io
 import io
+import time
 
 from bindings import *
 
@@ -27,9 +28,11 @@ for shape in np.geomspace(0.1, 1.0, 5):
     src_small = transform.resize(src, (rows_small, cols_src_small), anti_aliasing=True)
     dst_small = transform.resize(dst, (rows_small, cols_dst_small), anti_aliasing=True)
     for patch_size in np.int_(np.geomspace(1, 30, 4)):
+        start = time.time()
         for trial in range(trial_count):
 #             correspondence, valid, timings = scanline_stereo_cpu(src_small, dst_small, patch_size, occlusion_cost, num_threads)
             correspondence, valid, timings = scanline_stereo_gpu(src_small, dst_small, patch_size, occlusion_cost)
             all_timings.append(timings)
             times_called += 1
         print(patch_size, rows_small, cols_src_small, cols_dst_small, ' '.join(map(str, np.median(all_timings, axis=0))))
+        print('elapsed', (time.time() - start) / trial_count)
