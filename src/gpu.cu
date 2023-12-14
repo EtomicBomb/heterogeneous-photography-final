@@ -40,8 +40,14 @@ min3(double x, double y, double z, double *min, char *argmin) {
 // only process some subset of the rows at once to limit our memory usage
 // parallelize cumulative sum functions? not sure if that's needed
 
-__device__ inline double
-get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, const double *pixel_similarity, long r, long s, long d) {
+__global__ void
+get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, const double *pixel_similarity, double *patch_similarity) {
+    long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long s = blockIdx.x * blockDim.x + threadIdx.x;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
+
+    if (r>= rows || s >= cols_src || d >= cols_dst) return;
+
     long rm = r - patch_size - 1;
     long sm = s - patch_size - 1;
     long dm = d - patch_size - 1;
@@ -63,11 +69,11 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
     long height = 2 * patch_size + 1 - underflow - overflow;
     long count = width * height;
 
-    return sum / count;
+    patch_similarity I(r, s, d) = sum / count;
 }
 
 __global__ void
-find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *pixel_similarity, char *traceback) {
+find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *patch_similarity, char *traceback) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
     long s = threadIdx.x;
 
@@ -84,8 +90,7 @@ find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occl
         long d = k - s;
         __syncthreads();
         if (r < rows && s < cols_src && d < cols_dst && d >= 0) {
-            double patch_similarity = get_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity, r, s, d);
-            double match = prev_prev[s] + patch_similarity;
+            double match = prev_prev[s] + patch_similarity I(r, s, d);
             double occlusion_src = d == 0 ? s * occlusion_cost : prev[s] + occlusion_cost;
             double occlusion_dst = s == 0 ? d * occlusion_cost : prev[s + 1] + occlusion_cost;
             min3(match, occlusion_src, occlusion_dst, &current[s + 1], &traceback I(r, s, d));
@@ -188,6 +193,8 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
 
     double *pixel_similarity;
     CHECK(cudaMalloc(&pixel_similarity, rows * cols_src * cols_dst * sizeof(*pixel_similarity)));
+    double *patch_similarity;
+    CHECK(cudaMalloc(&patch_similarity, rows * cols_src * cols_dst * sizeof(*patch_similarity)));
     char *traceback;
     CHECK(cudaMalloc(&traceback, rows * cols_src * cols_dst * sizeof(*traceback)));
     long *correspondence_device; 
@@ -199,7 +206,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     dim3 block, grid;
     long shared;
 
-    size_t timing_event_count = 7;
+    size_t timing_event_count = 8;
     std::vector<cudaEvent_t> events(timing_event_count);
     for (cudaEvent_t& event : events) {
         cudaEventCreate(&event);
@@ -229,19 +236,25 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cumulative_sum_cols_dst<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, pixel_similarity);
 
     cudaEventRecord(events[4]);
+
+    block = dim3(32, 1, 32);
+    grid = dim3((cols_src + block.x - 1) / block.x, (rows + block.y - 1) / block.y, (cols_dst + block.z - 1) / block.z);
+    get_patch_similarity<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, patch_size, pixel_similarity, patch_similarity);
+
+    cudaEventRecord(events[5]);
     
     block = dim3(cols_src, 1, 1);
     grid = dim3(1, rows, 1);
     shared = 3 * (cols_src + 1) * sizeof(double);
-    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, pixel_similarity, traceback);
+    find_costs<<<grid, block, shared, 0>>>(rows, cols_src, cols_dst, patch_size, occlusion_cost, patch_similarity, traceback);
 
-    cudaEventRecord(events[5]);
+    cudaEventRecord(events[6]);
 
     block = dim3(1, 1024, 1);
     grid = dim3(1, (rows + block.y - 1) / block.y, 1);
     traceback_correspondence<<<grid, block, 0, 0>>>(rows, cols_src, cols_dst, traceback, correspondence_device, valid_device);
 
-    cudaEventRecord(events[6]);
+    cudaEventRecord(events[7]);
 
     CHECK(cudaMemcpy(correspondence, correspondence_device, rows * cols_src * sizeof(*correspondence), cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(valid, valid_device, rows * cols_src * sizeof(*valid), cudaMemcpyDeviceToHost));
@@ -249,6 +262,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     cudaFree(src_device);
     cudaFree(dst_device);
     cudaFree(pixel_similarity);
+    cudaFree(patch_similarity);
     cudaFree(traceback);
     cudaFree(correspondence_device);
     cudaFree(valid_device);
