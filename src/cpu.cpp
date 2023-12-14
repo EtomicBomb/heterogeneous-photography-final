@@ -15,7 +15,7 @@
 #define Isrc(r, s) [(r) * cols_src + (s)]
 #define Idst(r, d) [(r) * cols_dst + (d)]
 
-inline long 
+inline char 
 argmin3(double x, double y, double z) {
     if (x < y) {
         return x < z ? 0 : 2;
@@ -23,11 +23,12 @@ argmin3(double x, double y, double z) {
     return y < z ? 1 : 2;
 }
 
-inline double 
-min3(double x, double y, double z) {
-    long index = argmin3(x, y, z);
+inline void 
+min3(double x, double y, double z, double *min, char *argmin) {
     double numbers[] = {x, y, z};
-    return numbers[index];
+    char index = argmin3(x, y, z);
+    *min = numbers[(int)index];
+    *argmin = index;
 }
 
 void
@@ -122,7 +123,7 @@ calculate_patch_similarity(long rows, long cols_src, long cols_dst, long patch_s
 }
 
 void
-calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, const double *patch_similarity, double *cost) {
+calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, const double *patch_similarity, double *cost, char *traceback) {
     #pragma omp parallel 
     {
         #pragma omp for collapse(2) nowait
@@ -147,9 +148,9 @@ calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, 
                 for (long s = s_low; s < s_high; s++) {
                     long d = k - s;
                     double match = cost I(r, s - 1, d - 1) + patch_similarity I(r, s, d);
-                    double left = cost I(r, s, d - 1) + occlusion_cost;
-                    double up = cost I(r, s - 1, d) + occlusion_cost;
-                    cost I(r, s, d) = min3(match, left, up);
+                    double left = cost I(r, s - 1, d) + occlusion_cost;
+                    double up = cost I(r, s, d - 1) + occlusion_cost;
+                    min3(match, left, up, &cost I(r, s, d), &traceback I(r, s, d));
                 }
             }
         }
@@ -157,18 +158,19 @@ calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, 
 }
 
 void
-traceback_correspondence(long rows, long cols_src, long cols_dst, const double *cost, long *correspondence, char *valid) {
+traceback_correspondence(long rows, long cols_src, long cols_dst, const double *cost, long *correspondence, char *valid, const char *traceback) {
     #pragma omp parallel for 
     for (long r = 0; r < rows; r++) {
         long s = cols_src - 1;
         long d = cols_dst - 1;
         while (s != 0 && d != 0) { // yes
             double match = cost I(r, s - 1, d - 1);
-            double left = cost I(r, s, d - 1);
-            double up = cost I(r, s - 1, d);
+            double left = cost I(r, s - 1, d);
+            double up = cost I(r, s, d - 1);
             long direction = argmin3(match, left, up);
-            long us[] = {1, 0, 1}; 
-            long ud[] = {1, 1, 0};
+            direction = traceback I(r, s, d);
+            long us[] = {1, 1, 0}; 
+            long ud[] = {1, 0, 1};
             s -= us[direction]; 
             d -= ud[direction]; 
             correspondence Isrc(r, s) = d;
@@ -184,6 +186,7 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     std::vector<double> pixel_similarity(rows * cols_src * cols_dst);
     std::vector<double> patch_similarity(rows * cols_src * cols_dst);
     std::vector<double> cost(rows * cols_src * cols_dst);
+    std::vector<char> traceback(rows * cols_src * cols_dst);
     std::memset(valid, 0, rows * cols_src * sizeof(*valid));
 
     omp_set_num_threads(num_threads);
@@ -222,13 +225,13 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     timings[5] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
-    calculate_costs(rows, cols_src, cols_dst, occlusion_cost, patch_similarity.data(), cost.data());
+    calculate_costs(rows, cols_src, cols_dst, occlusion_cost, patch_similarity.data(), cost.data(), traceback.data());
 
     stop = std::chrono::high_resolution_clock::now();
     timings[6] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
-    traceback_correspondence(rows, cols_src, cols_dst, cost.data(), correspondence, valid);
+    traceback_correspondence(rows, cols_src, cols_dst, cost.data(), correspondence, valid, traceback.data());
 
     stop = std::chrono::high_resolution_clock::now();
     timings[7] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();

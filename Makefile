@@ -1,5 +1,5 @@
 ccflags = -g -Ofast -fopenmp --shared -fPIC -Wall
-nvccflags = -g -O3 -arch=sm_60 --shared -Xcompiler -fPIC -Xcompiler -Wall
+nvccflags = -g -O3 -use_fast_math -arch=sm_60 --shared -Xcompiler -fPIC -Xcompiler -Wall
 
 run: target/cpu.so
 	python3 src/main.py

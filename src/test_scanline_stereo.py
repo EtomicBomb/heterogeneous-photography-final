@@ -20,15 +20,12 @@ def test_one():
     patch_size = 10
     occlusion_cost = 0.01
     num_cpu_threads = 32
-    correspondence0, valid0, gpu_timings = scanline_stereo_gpu(src, dst, patch_size, occlusion_cost)
-    correspondence1, valid1, _ = scanline_stereo_naive_gpu(src, dst, patch_size, occlusion_cost)
-    correspondence2, valid2, cpu_timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_cpu_threads)
+    correspondence1, valid1, cpu_timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_cpu_threads)
     print('cpu timings', cpu_timings)
+    correspondence0, valid0, gpu_timings = scanline_stereo_gpu(src, dst, patch_size, occlusion_cost)
     print('gpu timings', gpu_timings)
     assert np.allclose(valid0, valid1)
-    assert np.allclose(valid0, valid2)
     assert np.allclose(correspondence0, correspondence1)
-    assert np.allclose(correspondence0, correspondence2)
 
 # TODO: these would be helpful if we wanted to test the intermediate results
 # def cum_sum_diagonal(expected):

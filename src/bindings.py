@@ -26,19 +26,6 @@ try:
 except:
     pass
 
-def scanline_stereo_naive_gpu(src, dst, patch_size, occlusion_cost):
-    rows, cols_src = np.shape(src)
-    rows_dst, cols_dst = np.shape(dst)
-    assert rows == rows_dst
-    src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
-    dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
-    correspondance = np.zeros((rows, cols_src), dtype=np.int_)
-    valid = np.zeros((rows, cols_src), dtype=np.byte)
-    timings = np.zeros((3,), dtype=np.float32)
-    ok = _gpu.scanline_stereo_naive(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
-    assert ok >= 0
-    return correspondance, valid, timings
-
 def scanline_stereo_gpu(src, dst, patch_size, occlusion_cost):
     rows, cols_src = np.shape(src)
     rows_dst, cols_dst = np.shape(dst)

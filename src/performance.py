@@ -3,6 +3,7 @@ import numpy as np
 from skimage import data, transform, util, color, measure, feature, registration
 from skimage import io as skimage_io
 import io
+import time
 
 from bindings import *
 
@@ -18,7 +19,7 @@ _, cols_dst = np.shape(dst)
 
 trial_count = 20
 occlusion_cost = 0.001
-num_threads = 0
+num_threads = 8
 
 times_called = 0
 for shape in np.geomspace(0.1, 1.0, 5):
