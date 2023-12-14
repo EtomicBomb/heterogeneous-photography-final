@@ -39,7 +39,21 @@ def scanline_stereo_gpu(src, dst, patch_size, occlusion_cost):
     assert ok >= 0
     return correspondance, valid, timings
 
+def scanline_stereo_gpu_naive(src, dst, patch_size, occlusion_cost):
+    rows, cols_src = np.shape(src)
+    rows_dst, cols_dst = np.shape(dst)
+    assert rows == rows_dst
+    src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
+    dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
+    correspondance = np.zeros((rows, cols_src), dtype=np.int_)
+    valid = np.zeros((rows, cols_src), dtype=np.byte)
+    timings = np.zeros((4,), dtype=np.float32)
+    ok = _gpu.scanline_stereo_naive(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings)
+    assert ok >= 0
+    return correspondance, valid, timings
+
 _cpu = ctypeslib.load_library('target/cpu', '.')
+
 _cpu.scanline_stereo.restype = ctypes.c_int
 _cpu.scanline_stereo.argtypes = [*scanline_stereo_argtypes, ctypes.c_int]
 
@@ -53,5 +67,21 @@ def scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_threads):
     valid = np.zeros((rows, cols_src), dtype=np.byte)
     timings = np.zeros((7,), dtype=np.float32)
     ok = _cpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings, num_threads)
+    assert ok >= 0
+    return correspondance, valid, timings
+
+_cpu.scanline_stereo_naive.restype = ctypes.c_int
+_cpu.scanline_stereo_naive.argtypes = [*scanline_stereo_argtypes, ctypes.c_int]
+
+def scanline_stereo_cpu_naive(src, dst, patch_size, occlusion_cost, num_threads):
+    rows, cols_src = np.shape(src)
+    rows_dst, cols_dst = np.shape(dst)
+    assert rows == rows_dst
+    src = np.require(src, dtype=np.float64, requirements=('A', 'C'))
+    dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
+    correspondance = np.zeros((rows, cols_src), dtype=np.int_)
+    valid = np.zeros((rows, cols_src), dtype=np.byte)
+    timings = np.zeros((4,), dtype=np.float32)
+    ok = _cpu.scanline_stereo_naive(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings, num_threads)
     assert ok >= 0
     return correspondance, valid, timings

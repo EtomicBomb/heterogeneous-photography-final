@@ -123,6 +123,29 @@ calculate_patch_similarity(long rows, long cols_src, long cols_dst, long patch_s
 }
 
 void
+calculate_patch_similarity_naive(long rows, long cols_src, long cols_dst, long patch_size, const double *pixel_similarity, double *patch_similarity) {
+    #pragma omp parallel for collapse(3)
+    for (long r = 0; r < rows; r++) {
+        for (long s = 0; s < cols_src; s++) {
+            for (long d = 0; d < cols_dst; d++) {
+                double sum = 0.0;
+                double count = 0.0;
+                for (long rn = r - patch_size; rn <= r + patch_size; rn++) {
+                    for (long sn = s - patch_size; sn <= s + patch_size; sn++) {
+                        long dn = sn + d - s;
+                        if (rn >= rows || rn < 0 || sn >= cols_src || sn < 0 || dn < 0 || dn >= cols_dst) continue;
+                        sum += pixel_similarity I(r, s, d);
+                        count += 1;
+                    }
+                }
+
+                patch_similarity I(r, s, d) = sum / count;
+            }
+        }
+    }
+}
+
+void
 calculate_costs(long rows, long cols_src, long cols_dst, double occlusion_cost, const double *patch_similarity, double *cost, char *traceback) {
     #pragma omp parallel 
     {
@@ -179,6 +202,47 @@ traceback_correspondence(long rows, long cols_src, long cols_dst, const double *
             }
         }
     }
+}
+
+extern "C" int
+scanline_stereo_naive(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *src, const double *dst, long *correspondence, char *valid, float *timings, int num_threads) {
+    std::vector<double> pixel_similarity(rows * cols_src * cols_dst);
+    std::vector<double> patch_similarity(rows * cols_src * cols_dst);
+    std::vector<double> cost(rows * cols_src * cols_dst);
+    std::vector<char> traceback(rows * cols_src * cols_dst);
+    std::memset(valid, 0, rows * cols_src * sizeof(*valid));
+
+    omp_set_num_threads(num_threads);
+
+    std::chrono::high_resolution_clock::time_point start;
+    std::chrono::high_resolution_clock::time_point stop;
+    start = std::chrono::high_resolution_clock::now();
+
+    get_pixel_similarity(rows, cols_src, cols_dst, src, dst, pixel_similarity.data());
+
+    stop = std::chrono::high_resolution_clock::now();
+    timings[0] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    start = stop;
+
+    calculate_patch_similarity_naive(rows, cols_src, cols_dst, patch_size, pixel_similarity.data(), patch_similarity.data());
+
+    stop = std::chrono::high_resolution_clock::now();
+    timings[1] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    start = stop;
+
+    calculate_costs(rows, cols_src, cols_dst, occlusion_cost, patch_similarity.data(), cost.data(), traceback.data());
+
+    stop = std::chrono::high_resolution_clock::now();
+    timings[2] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    start = stop;
+
+    traceback_correspondence(rows, cols_src, cols_dst, cost.data(), correspondence, valid, traceback.data());
+
+    stop = std::chrono::high_resolution_clock::now();
+    timings[3] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    start = stop;
+
+    return 0;
 }
 
 extern "C" int
