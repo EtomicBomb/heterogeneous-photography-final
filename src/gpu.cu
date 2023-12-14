@@ -72,6 +72,30 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
     patch_similarity I(r, s, d) = sum / count;
 }
 
+
+__global__ void
+get_patch_similarity_naive(long rows, long cols_src, long cols_dst, long patch_size, const double *src, const double *dst, double *patch_similarity) {
+    long r = blockIdx.y * blockDim.y + threadIdx.y;
+    long s = blockIdx.x * blockDim.x + threadIdx.x;
+    long d = blockIdx.z * blockDim.z + threadIdx.z;
+
+    if (r >= rows || s >= cols_src || d >= cols_dst) return;
+
+    double sum = 0.0;
+    double count = 0.0;
+    for (long rn = r - patch_size; rn <= r + patch_size; rn++) {
+        for (long sn = s - patch_size; sn <= s + patch_size; sn++) {
+            long dn = sn + d - s;
+            if (rn >= rows || rn < 0 || sn >= cols_src || sn < 0 || dn < 0 || dn >= cols_dst) continue;
+            double distance = src Isrc(rn, sn) - dst Idst(rn, dn);
+            sum += distance * distance;
+            count += 1;
+        }
+    }
+
+    patch_similarity I(r, s, d) = sum / count;
+}
+
 __global__ void
 find_costs(long rows, long cols_src, long cols_dst, long patch_size, double occlusion_cost, const double *patch_similarity, char *traceback) {
     long r = blockIdx.y * blockDim.y + threadIdx.y;
@@ -133,7 +157,7 @@ get_pixel_similarity(long rows, long cols_src, long cols_dst, const double *src,
 
     double distance = src Isrc(r, s) - dst Idst(r, d);
     pixel_similarity I(r, s, d) = distance * distance;
-}
+}2
 
 __device__ void 
 sum_diagonal(long rows, long cols_src, long cols_dst, long r, long s, long d, double *array) {
