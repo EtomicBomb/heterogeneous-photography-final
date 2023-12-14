@@ -198,43 +198,43 @@ scanline_stereo(long rows, long cols_src, long cols_dst, long patch_size, double
     get_pixel_similarity(rows, cols_src, cols_dst, src, dst, pixel_similarity.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[1] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[0] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
     cumulative_sum_rows(rows, cols_src, cols_dst, pixel_similarity.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[2] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[1] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
     cumulative_sum_cols_src(rows, cols_src, cols_dst, pixel_similarity.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[3] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[2] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
     
     cumulative_sum_cols_dst(rows, cols_src, cols_dst, pixel_similarity.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[4] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[3] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
     calculate_patch_similarity(rows, cols_src, cols_dst, patch_size, pixel_similarity.data(), patch_similarity.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[5] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[4] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
     calculate_costs(rows, cols_src, cols_dst, occlusion_cost, patch_similarity.data(), cost.data(), traceback.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[6] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[5] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
     traceback_correspondence(rows, cols_src, cols_dst, cost.data(), correspondence, valid, traceback.data());
 
     stop = std::chrono::high_resolution_clock::now();
-    timings[7] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
+    timings[6] = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
     start = stop;
 
     return 0;

@@ -22,10 +22,9 @@ occlusion_cost = 0.001
 num_threads = 8
 
 all_timings = []
-rows, cols_src, cols_dst = np.int_(shape * np.array([rows, cols_src, cols_dst]))
 for patch_size in np.int_(np.geomspace(1, 30, 4)):
     for trial in range(trial_count):
-        correspondence, valid, timings = scanline_stereo_gpu(src, dst, patch_size, occlusion_cost)
-#             correspondence, valid, timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_threads)
-        all_timings.append( np.diff(timings)[:8])
+#         correspondence, valid, timings = scanline_stereo_gpu(src, dst, patch_size, occlusion_cost)
+        correspondence, valid, timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_threads)
+        all_timings.append(timings)
     print(patch_size, rows, cols_src, cols_dst, ' '.join(map(str, np.median(all_timings, axis=0))))

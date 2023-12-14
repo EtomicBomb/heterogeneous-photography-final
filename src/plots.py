@@ -12,25 +12,33 @@ from collections import defaultdict
 
 import matplotlib as mpl
 
-# 32.0 49.0 28.0 27.0 94.0 82.0
-pixel similarity, cumulative sum rows, cumulative sum cols, cols dst, patch similarity, costs, traceback
+r = 370
+s = 417
+d = 417
+p = (2*30+1) **2
+rsd = r * s * d
 
 points = [
-    (1/12, , 'pixel disparity'), # 32.0
-    (1/16, , 'prefix rows'), # 49.8
-    (1/16, , 'prefix cols'), # 28.0
-    (1/8, , 'naive patch disparity'), # 
-    (1/10, , 'fast patch disparity'), # 27.0
-    (1/8, , 'costs'), # 94.0
-    (0, , 'traceback'), # 82.0
+    (1/12, 2 * rsd / 32.0 / 1000, 'pixel disparity'), # 32.0
+    (1/16, rsd / 50.0 / 1000, 'prefix rows'), # 50.0
+    (1/16, rsd / 28.5 / 1000, 'prefix cols'), # 28.5
+    (1/8, rsd * p / 10.0 / 1000, 'naive patch disparity'), # 
+    (1/10, 4 * rsd / 95.0 / 1000, 'fast patch disparity'), # 95.0
+    (1/8, 5 * rsd / 84.5 / 1000, 'costs'), # 84.5
+    (0, 0 / 1.0 / 1000, 'traceback'), # 1.0
 ]
 
 fig, ax = plt.subplots()
-ax.set(xscale='log', yscale='log', ylim=(1e11, 1e12), xlabel='arithmetic intensity (flops/byte)', ylabel='performance (flops/second)')
+ax.set(xscale='log', yscale='log',  xlabel='arithmetic intensity (flops/byte)', ylabel='performance (flops/second)')
 xs = np.linspace(0, 1000)
-ys = np.minimum(xs * 6.72e11, 5.098e11) # np.min(xs * 2.56e10, 1.792e11)
+ys = np.minimum(xs * 2.56e10, 1.792e11) # np.minimum(xs * 6.72e11, 5.098e11)
 ax.plot(xs, ys)
+for x, y, label in points:
+    ax.scatter(x, y)
+    ax.text(x, y, label, va='bottom', ha='center')
 plt.show()
+
+
 
 
 data = defaultdict(lambda: defaultdict(list))

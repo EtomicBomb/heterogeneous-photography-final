@@ -51,7 +51,7 @@ def scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_threads):
     dst = np.require(dst, dtype=np.float64, requirements=('A', 'C'))
     correspondance = np.zeros((rows, cols_src), dtype=np.int_)
     valid = np.zeros((rows, cols_src), dtype=np.byte)
-    timings = np.zeros((8,), dtype=np.float32)
+    timings = np.zeros((7,), dtype=np.float32)
     ok = _cpu.scanline_stereo(rows, cols_src, cols_dst, patch_size, occlusion_cost, src, dst, correspondance, valid, timings, num_threads)
     assert ok >= 0
     return correspondance, valid, timings
