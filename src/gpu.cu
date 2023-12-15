@@ -46,14 +46,14 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
     long s = blockIdx.x * blockDim.x + threadIdx.x;
     long d = blockIdx.z * blockDim.z + threadIdx.z;
 
-    if (r>= rows || s >= cols_src || d >= cols_dst) return;
+    if (r >= rows || s >= cols_src || d >= cols_dst) return;
 
     long rm = r - patch_size - 1;
     long sm = s - patch_size - 1;
     long dm = d - patch_size - 1;
 
     long overflow = max(0l, max(s + patch_size - cols_src + 1, d + patch_size - cols_dst + 1));
-    long underflow = - min(0l, min(sm, dm) + 1);
+    long underflow = - min(0l, 1 + min(sm, dm));
 
     long rp = min(r + patch_size, rows - 1);
     long sp = s + patch_size - overflow;
@@ -61,7 +61,7 @@ get_patch_similarity(long rows, long cols_src, long cols_dst, long patch_size, c
 
     double rpsp = pixel_similarity I(rp, sp, dp);
     double rpsm = sm >= 0 && dm >= 0 ? pixel_similarity I(rp, sm, dm) : 0.0;
-    double rmsp = rm >= 0 ? pixel_similarity I(rm, sp, dp): 0.0;
+    double rmsp = rm >= 0 ? pixel_similarity I(rm, sp, dp) : 0.0;
     double rmsm = rm >= 0 && sm >= 0 && dm >= 0 ? pixel_similarity I(rm, sm, dm) : 0.0;
     double sum = rpsp + rmsm - rpsm - rmsp;
 

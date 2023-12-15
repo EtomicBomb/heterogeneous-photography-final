@@ -9,6 +9,7 @@ import cv2
 import imageio.v3 as iio
 import io
 import time
+from pathlib import Path
 
 from bindings import *
     
@@ -154,8 +155,8 @@ def stream_two_camera():
         yield src, dst
 
 def stream_two_still():
-    src = iio.imread('inputs/Rocks2/view1.png')
-    dst = iio.imread('inputs/Rocks2/view5.png')
+    src = iio.imread('inputs/half/Lampshade1/view1.png')
+    dst = iio.imread('inputs/half/Lampshade1/view5.png')
     src = util.img_as_float32(src)
     dst = util.img_as_float32(dst)
 #     src = src[:,:,:3]
@@ -262,11 +263,11 @@ class Demo:
         self.dst_points.axes.set_axis_off()
 
         ax = fig.add_subplot(gs[-1, 2])
-        self.patch_size = widgets.Slider(ax, 'patch size', 1, 50, valinit=25)
+        self.patch_size = widgets.Slider(ax, 'patch size', 1, 50, valinit=8)
         self.patch_size.on_changed(self.slider_update)
 
         ax = fig.add_subplot(gs[-2, 2])
-        self.occlusion_cost = widgets.Slider(ax, 'occlusion cost', 0, 1, valinit=0.02)
+        self.occlusion_cost = widgets.Slider(ax, 'occlusion cost', -8, 1, valinit=-3)
         self.occlusion_cost.on_changed(self.slider_update)
 
         ax = fig.add_subplot(gs[-1, 1])
@@ -303,7 +304,7 @@ class Demo:
 #         self.dst_points.set_array(util.img_as_ubyte(dst_rectify))
 
         patch_size = np.int_(self.patch_size.val)
-        occlusion_cost = self.occlusion_cost.val
+        occlusion_cost = 10 ** self.occlusion_cost.val
         num_threads = 8
         src_gray = color.rgb2gray(src)
         dst_gray = color.rgb2gray(dst)
@@ -311,7 +312,9 @@ class Demo:
         valid = np.expand_dims(valid, -1)
         correspondence = np.arange(src_gray.shape[1]) - correspondence
         correspondence = np.expand_dims(correspondence, -1) * [1.0, 1.0, 1.0]
-        correspondence = (correspondence - np.min(correspondence)) / np.ptp(correspondence)
+        correspondence = correspondence * valid
+#         correspondence = (correspondence - np.min(correspondence)) / np.ptp(correspondence)
+        correspondence = np.clip((correspondence - 10) / 50, 0, 1)
         self.src_points.set_array(util.img_as_ubyte(np.ones_like(src) * valid))
         self.dst_points.set_array(util.img_as_ubyte(correspondence * [1.0, 1.0, 1.0]))
 
@@ -431,6 +434,28 @@ def rectify_demo(left, right):
 
 Demo(stream_two_still())
 
+
+# src = iio.imread('inputs/Bowling1/view1.png')
+# dst = iio.imread('inputs/Bowling1/view5.png')
+# src = color.rgb2gray(src)
+# dst = color.rgb2gray(dst)
+# # src = util.img_as_float64(src)
+# # dst = util.img_as_float64(dst)
+# 
+# occlusion_cost = 0.001
+# patch_size = 30
+# num_threads = 8
+# correspondence, valid, timings = scanline_stereo_cpu(src, dst, patch_size, occlusion_cost, num_threads)
+# 
+# start = time.time()
+# src = util.img_as_ubyte(src)
+# dst = util.img_as_ubyte(dst)
+# # stereo = cv2.StereoSGBM_create(numDisparities=100, blockSize=11)
+# # disparity = stereo.compute(src, dst)
+# # print((time.time() - start) / 50)
+# plt.axis('off')
+# plt.imshow((np.arange(417) - correspondence) * valid)
+# plt.show()
 
 #             
 #             self.lightness_model = IterativeReweight()

@@ -12,30 +12,51 @@ from collections import defaultdict
 
 import matplotlib as mpl
 
+# 1 370 417 417 32.0 187.0 88.0 1.0
+# 3 370 417 417 32.0 476.5 88.0 1.0
+# 9 370 417 417 32.0 769.0 89.0 1.0
+# 30 370 417 417 32.0 2997.0 89.0 1.0
+
 r = 370
 s = 417
 d = 417
 p = (2*30+1) **2
 rsd = r * s * d
 
-points = [
+xs = np.linspace(0, 1000)
+
+ys = np.minimum(xs * 2.56e10, 1.792e11) # cpu
+points = [ # cpu
     (1/12, 2 * rsd / 32.0 / 1000, 'pixel disparity'), # 32.0
     (1/16, rsd / 50.0 / 1000, 'prefix rows'), # 50.0
     (1/16, rsd / 28.5 / 1000, 'prefix cols'), # 28.5
-    (1/8, rsd * p / 10.0 / 1000, 'naive patch disparity'), # 
+    (1/8, rsd * p / 2997.0 / 1000, 'naive patch disparity'), # 
     (1/10, 4 * rsd / 95.0 / 1000, 'fast patch disparity'), # 95.0
     (1/8, 5 * rsd / 84.5 / 1000, 'costs'), # 84.5
     (0, 0 / 1.0 / 1000, 'traceback'), # 1.0
 ]
 
+
+# 2.34552 14.106384 17.784304 9.156736 5.1363363 33.57387 0.57118404
+# 2.390912 123.2245 33.747505 0.586176
+
+ys = np.minimum(xs * 6.72e11, 5.098e11) # gpu
+points = [ # gpu
+    (1/12, 2 * rsd / 2.345 / 1000, 'pixel disparity'), # 32.0
+    (1/16, rsd / 14.10 / 1000, 'prefix rows'), # 50.0
+    (1/16, rsd / 17.8 / 1000, 'prefix cols'), # 28.5
+    (1/8, rsd * p / 123.22 / 1000, 'naive patch disparity'), # 
+    (1/10, 4 * rsd / 5.14 / 1000, 'fast patch disparity'), # 95.0
+    (1/8, 5 * rsd / 33.574 / 1000, 'costs'), # 84.5
+    (0, 0 / 0.5612 / 1000, 'traceback'), # 1.0
+]
+
 fig, ax = plt.subplots()
 ax.set(xscale='log', yscale='log',  xlabel='arithmetic intensity (flops/byte)', ylabel='performance (flops/second)')
-xs = np.linspace(0, 1000)
-ys = np.minimum(xs * 2.56e10, 1.792e11) # np.minimum(xs * 6.72e11, 5.098e11)
 ax.plot(xs, ys)
 for x, y, label in points:
     ax.scatter(x, y)
-    ax.text(x, y, label, va='bottom', ha='center')
+    ax.text(x, y, label, va='bottom', ha='left')
 plt.show()
 
 
