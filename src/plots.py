@@ -5,58 +5,32 @@ from collections import defaultdict
 
 import matplotlib as mpl
 
-import numpy as np
-import matplotlib.pyplot as plt
-
-from collections import defaultdict
-
-import matplotlib as mpl
-
-# 1 370 417 417 32.0 187.0 88.0 1.0
-# 3 370 417 417 32.0 476.5 88.0 1.0
-# 9 370 417 417 32.0 769.0 89.0 1.0
-# 30 370 417 417 32.0 2997.0 89.0 1.0
-
 r = 370
 s = 417
 d = 417
-p = (2*30+1) **2
+p = 30
 rsd = r * s * d
 
-xs = np.linspace(0, 1000)
+xs = np.logspace(-1.3, 2.5, 500)
 
-ys = np.minimum(xs * 2.56e10, 1.792e11) # cpu
-points = [ # cpu
-    (1/12, 2 * rsd / 32.0 / 1000, 'pixel disparity'), # 32.0
-    (1/16, rsd / 50.0 / 1000, 'prefix rows'), # 50.0
-    (1/16, rsd / 28.5 / 1000, 'prefix cols'), # 28.5
-    (1/8, rsd * p / 2997.0 / 1000, 'naive patch disparity'), # 
-    (1/10, 4 * rsd / 95.0 / 1000, 'fast patch disparity'), # 95.0
-    (1/8, 5 * rsd / 84.5 / 1000, 'costs'), # 84.5
-    (0, 0 / 1.0 / 1000, 'traceback'), # 1.0
-]
+stages = ['pixel disparity', 'prefix rows', 'prefix cols', 'naive patch disparity', 'fast patch disparity', 'costs', 'traceback']
+ai = [2 * rsd /(r*s+r*d+rsd) / 8, 1/16, 1/16, ((2*p+1)**2 + 1)/16, 1/4, 1/5]
+flops = [2 * rsd, 2 * rsd, 2 * rsd, rsd * ((2*p+1)**2 + 1), 4 * rsd, 5 * rsd, 0]
 
+# title = 'flop rate for the cpu implementation'
+# ys = np.minimum(xs * 2.56e10, 1.792e11) # cpu
+# millis = [32.0, 50.0, 28.5, 2997.0, 95.0, 84.5, 1.0] # cpu
 
-# 2.34552 14.106384 17.784304 9.156736 5.1363363 33.57387 0.57118404
-# 2.390912 123.2245 33.747505 0.586176
-
+title = 'flop rate for the gpu implementation'
 ys = np.minimum(xs * 6.72e11, 5.098e11) # gpu
-points = [ # gpu
-    (1/12, 2 * rsd / 2.345 / 1000, 'pixel disparity'), # 32.0
-    (1/16, rsd / 14.10 / 1000, 'prefix rows'), # 50.0
-    (1/16, rsd / 17.8 / 1000, 'prefix cols'), # 28.5
-    (1/8, rsd * p / 123.22 / 1000, 'naive patch disparity'), # 
-    (1/10, 4 * rsd / 5.14 / 1000, 'fast patch disparity'), # 95.0
-    (1/8, 5 * rsd / 33.574 / 1000, 'costs'), # 84.5
-    (0, 0 / 0.5612 / 1000, 'traceback'), # 1.0
-]
+millis = [2.34552, 14.106384, 17.784304, 9.156736, 123.22, 5.1363363, 33.57387, 0.57118404] # gpu
 
 fig, ax = plt.subplots()
-ax.set(xscale='log', yscale='log',  xlabel='arithmetic intensity (flops/byte)', ylabel='performance (flops/second)')
+ax.set(xscale='log', yscale='log',  xlabel='arithmetic intensity (flops/byte)', ylabel='performance (flops/second)', title=title)
 ax.plot(xs, ys)
-for x, y, label in points:
-    ax.scatter(x, y)
-    ax.text(x, y, label, va='bottom', ha='left')
+for ai, flop, milli, stage in zip(ai, flops, millis, stages):
+    ax.scatter(ai, flop / (milli / 1000), label=stage)
+plt.legend()
 plt.show()
 
 
@@ -68,7 +42,7 @@ stage_labels = ['pixel_similarity', 'sum_rows', 'sum_cols1', 'sum_cols2', 'patch
 for line in open('reports/timings.txt', 'r').readlines():
     patch_size, rows, cols_src, cols_dst, *stage_times = map(float, line.strip().split(' '))
     for stage_time, stage_label in zip(stage_times, stage_labels):
-        data[stage_label][patch_size].append((rows * cols_src * cols_dst, stage_time))
+        data[stage_label][patch_size].append(stage_time)
 
 # https://matplotlib.org/stable/gallery/lines_bars_and_markers/barchart.html#sphx-glr-gallery-lines-bars-and-markers-barchart-py
 
@@ -89,7 +63,6 @@ for stage_label, patch_size_to_pixel_time in data.items():
     
     for patch_size, pixel_time in patch_size_to_pixel_time.items():
         offset = width * multiplier
-        pixel_time = np.array(pixel_time)[[0, 3, 4]]
         pixel, time = zip(*pixel_time)
 
         print(pixel, time)
@@ -99,7 +72,7 @@ for stage_label, patch_size_to_pixel_time in data.items():
         multiplier += 1
 
     #ax.set_yticks(x+width,  ['small', 'medium', 'large'])
-    ax.set_yticks(x+width,  ['65px', '208px', '370px'])
+    ax.set_yticks(x+width,  stage_labels)
     ax.set(title=stage_label)
     ax.semilogx()
     ax.set_xlim((0.01, 190))
