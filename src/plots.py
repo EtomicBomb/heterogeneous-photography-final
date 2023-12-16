@@ -5,110 +5,50 @@ from collections import defaultdict
 
 import matplotlib as mpl
 
-r = 370
-s = 417
-d = 417
-p = 30
-rsd = r * s * d
+stage_labels = ['pixel similarity', 'sum rows', 'sum cols src', 'sum cols dst', 'patch similarity', 'costs', 'traceback']
+image_sizes = [139, 278, 416, 555]
 
-xs = np.logspace(-1.3, 2.5, 500)
+# gpu
+gpu_data = [
+    [0.17816, 0.827392, 0.178176, 0.356816, 0.31984, 0.373488, 0.134992],
+    [0.562208, 3.037296, 1.432624, 1.4772799, 1.255536, 7.599696, 0.238224],
+    [0.94542396, 5.2615843, 2.702352, 2.622032, 2.193664, 15.150145, 0.344064],
+    [2.200288, 12.603216, 6.2593603, 9.775696, 5.07616, 37.055138, 0.559968],
+]
 
-stages = ['pixel disparity', 'prefix rows', 'prefix cols', 'naive patch disparity', 'fast patch disparity', 'costs', 'traceback']
-ai = [2 * rsd /(r*s+r*d+rsd) / 8, 1/16, 1/16, ((2*p+1)**2 + 1)/16, 1/4, 1/5]
-flops = [2 * rsd, 2 * rsd, 2 * rsd, rsd * ((2*p+1)**2 + 1), 4 * rsd, 5 * rsd, 0]
+# cpu
+cpu_data = [
+    [1.0, 1.0, 1.0, 1.0, 4.0, 3.0, 0.0],
+    [7.5, 12.5, 6.5, 6.5, 21.0, 19.5, 0.0],
+    [13.0, 23.0, 12.0, 11.0, 38.0, 35.0, 0.0],
+    [29.0, 47.0, 29.0, 25.0, 85.5, 123.0, 0.5],
+]
 
-# title = 'flop rate for the cpu implementation'
-# ys = np.minimum(xs * 2.56e10, 1.792e11) # cpu
-# millis = [32.0, 50.0, 28.5, 2997.0, 95.0, 84.5, 1.0] # cpu
 
-title = 'flop rate for the gpu implementation'
-ys = np.minimum(xs * 6.72e11, 5.098e11) # gpu
-millis = [2.34552, 14.106384, 17.784304, 9.156736, 123.22, 5.1363363, 33.57387, 0.57118404] # gpu
 
-fig, ax = plt.subplots()
-ax.set(xscale='log', yscale='log',  xlabel='arithmetic intensity (flops/byte)', ylabel='performance (flops/second)', title=title)
-ax.plot(xs, ys)
-for ai, flop, milli, stage in zip(ai, flops, millis, stages):
-    ax.scatter(ai, flop / (milli / 1000), label=stage)
-plt.legend()
+# Plotting GPU chart with horizontal bars
+fig, axs = plt.subplots(2, 1, sharex=True)
+ax = axs[0]
+bar_height = 0.2
+for i, size in enumerate(image_sizes):
+    ax.barh(np.arange(len(stage_labels)) + i * bar_height, cpu_data[i], bar_height, label=f'image size: {size} rows')
+
+ax.set_yticks(np.arange(len(stage_labels)) + (len(image_sizes) - 1) * bar_height / 2)
+ax.set_yticklabels(stage_labels)
+ax.set_xlabel('runtime (milliseconds)')
+ax.set_title('time to solution, cpu implementation')
+ax.legend()
+
+ax = axs[1]
+
+bar_height = 0.2
+for i, size in enumerate(image_sizes):
+    ax.barh(np.arange(len(stage_labels)) + i * bar_height, gpu_data[i], bar_height, label=f'image size: {size} rows')
+
+ax.set_yticks(np.arange(len(stage_labels)) + (len(image_sizes) - 1) * bar_height / 2)
+ax.set_yticklabels(stage_labels)
+ax.set_xlabel('runtime (milliseconds)')
+ax.set_title('time to solution, gpu implementation')
+ax.legend()
+
 plt.show()
-
-
-
-
-data = defaultdict(lambda: defaultdict(list))
-
-stage_labels = ['pixel_similarity', 'sum_rows', 'sum_cols1', 'sum_cols2', 'patch_similarity', 'costs', 'traceback', 'patch_similarity2']
-for line in open('reports/timings.txt', 'r').readlines():
-    patch_size, rows, cols_src, cols_dst, *stage_times = map(float, line.strip().split(' '))
-    for stage_time, stage_label in zip(stage_times, stage_labels):
-        data[stage_label][patch_size].append(stage_time)
-
-# https://matplotlib.org/stable/gallery/lines_bars_and_markers/barchart.html#sphx-glr-gallery-lines-bars-and-markers-barchart-py
-
-fig, axs = plt.subplots(1, 3, dpi=80, sharex=True, sharey=True)
-axs = iter(np.ravel(axs))
-
-first = True
-for stage_label, patch_size_to_pixel_time in data.items():
-    
-    print(stage_label)
-    if stage_label not in ('costs', 'traceback', 'patch_similarity2'):
-        continue
-    ax = next(axs)
-
-    x = np.arange(3)  # the label locations
-    width = 0.2  # the width of the bars
-    multiplier = 0
-    
-    for patch_size, pixel_time in patch_size_to_pixel_time.items():
-        offset = width * multiplier
-        pixel, time = zip(*pixel_time)
-
-        print(pixel, time)
-        bar_container = ax.barh(x + offset, list(time), width, label=f'patch_size={patch_size}')
-        ax.bar_label(bar_container, fmt='{:,.2f}')
-        #ax.plot(pixel, time, label=f'patch_size={patch_size}')
-        multiplier += 1
-
-    #ax.set_yticks(x+width,  ['small', 'medium', 'large'])
-    ax.set_yticks(x+width,  stage_labels)
-    ax.set(title=stage_label)
-    ax.semilogx()
-    ax.set_xlim((0.01, 190))
-
-    
-
-    if first:
-        first = False
-        ax.set(xlabel='log median execution time (ms)')
-        ax.legend(loc='lower right', ncols=2)
-plt.show()
-
-
-'''
-first = True
-
-    data = sorted(data, key=lambda x: x[0] * x[1])
-
-    bar_data = []
-    for rows, cols, time in data:
-        bar_data.append((f'{int(rows)}x{int(cols)}', time))
-    titles, max_times = zip(*bar_data)
-
-    bar_container = ax.barh(list(titles), list(max_times))
-    ax.semilogx()
-    ax.set_xlim((1000, 6000))
-    ax.bar_label(bar_container, fmt='{:,.0f}')
-    ax.set(ylabel=f'{int(stream)} streams', title=stage_label)
-
-    if first:
-        ax.set(xlabel='log execution time (microseconds)')
-        first = False
-'''
-
-# subplot_width = math.ceil(math.sqrt(len(combinations)))
-# fig, axs = plt.subplots(subplot_width, subplot_width, sharex=True, sharey=True)
-# axs = np.ravel(axs)
-#     ax.set_title(title)
-#     ax.loglog(dims, times)
