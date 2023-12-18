@@ -125,34 +125,37 @@ class Main:
         dst_gray = dst_gray - np.mean(dst_gray) + np.mean(src_gray)
 
         correspondence, valid, timings = scanline_stereo_cpu(
-                src_gray, dst_gray, 
+                dst_gray, src_gray, 
                 patch_size=int(self.patch_size.val), occlusion_cost=10**self.occlusion_cost.val, num_threads=8)
-        pretty = correspondence - np.arange(self.cols_src)
+        pretty = np.arange(self.cols_src) - correspondence
         valid = valid & (pretty >= 0)
         pretty = pretty * valid
         pretty = np.clip((pretty - 8) / 30, 0, 1)
         pretty = color.gray2rgb(pretty)
 
-        coords_src = np.mgrid[:self.rows, :self.cols_src]
-        coords_dst = np.expand_dims(np.arange(self.rows), 1)
-        coords_dst = np.broadcast_to(coords_dst, (self.rows, self.cols_src))
-        coords_dst = np.stack((coords_dst, correspondence), axis=0) 
+        coords_dst = np.mgrid[:self.rows, :self.cols_dst]
+        coords_src = np.expand_dims(np.arange(self.rows), 1)
+        coords_src = np.broadcast_to(coords_src, (self.rows, self.cols_src))
+        coords_src = np.stack((coords_src, correspondence), axis=0) 
 
         coords_src_valid = coords_src.reshape(2, -1)[:, np.flatnonzero(valid)]
         coords_dst_valid = coords_dst.reshape(2, -1)[:, np.flatnonzero(valid)]
 
         corrected_dst = estimate_model(src, dst, coords_src_valid, coords_dst_valid)
 
-        coords_dst_valid = np.expand_dims([self.rows, self.cols_dst], (1, 2))
-        coords_dst_valid = valid & (coords_dst >= 0) & (coords_dst < coords_dst_valid)
-        coords_dst_valid = np.all(coords_dst_valid, axis=0)
-        coords_dst_valid = np.expand_dims(coords_dst_valid, 2)
+        coords_src_valid = np.expand_dims([self.rows, self.cols_src], (1, 2))
+        coords_src_valid = valid & (coords_src >= 0) & (coords_src < coords_src_valid)
+        coords_src_valid = np.all(coords_src_valid, axis=0)
+        coords_src_valid = np.expand_dims(coords_src_valid, 2)
 
-        colors_dst = corrected_dst[tuple(coords_dst)]
-        colors_dst = np.where(coords_dst_valid, colors_dst, np.nan)
 
-        integrated = np.nanmean([util.img_as_float64(src), colors_dst], axis=0)
-        # TODO: average pixels from src and corrected_dst
+#         colors_src = dst
+        colors_src = util.img_as_float64(src)
+        colors_src = colors_src[tuple(coords_src)]
+        colors_src = np.where(coords_src_valid, colors_src, np.nan)
+
+        integrated = np.nan_to_num(colors_src, nan=corrected_dst)
+#         integrated = np.nanmean([corrected_dst, colors_src], axis=0)
 
         self.src_widget.set_data(util.img_as_ubyte(raw_src))
         self.dst_widget.set_data(util.img_as_ubyte(raw_dst))
@@ -163,7 +166,7 @@ class Main:
         self.src_color_widget.set_data(util.img_as_ubyte(src))
         self.dst_color_widget.set_data(util.img_as_ubyte(corrected_dst))
 
-        self.mapped_widget.set_data(util.img_as_ubyte(colors_dst))
+        self.mapped_widget.set_data(util.img_as_ubyte(colors_src))
         self.integrated_widget.set_data(util.img_as_ubyte(integrated))
 
         return [self.src_widget, self.dst_widget, self.src_rectified_widget, self.dst_rectified_widget, self.src_color_widget, self.dst_color_widget, self.mapped_widget, self.integrated_widget]
