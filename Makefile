@@ -4,9 +4,6 @@ nvccflags = -g -O3 -use_fast_math -arch=sm_60 --shared -Xcompiler -fPIC -Xcompil
 run: target/cpu.so
 	python3 src/main.py
 
-run-gpu: target/cpu.so target/gpu.so
-	python3 src/main.py
-
 test: target/cpu.so target/gpu.so
 	python3 -m pytest -s src/test_scanline_stereo.py
 
@@ -22,5 +19,5 @@ target/gpu.so: src/gpu.cu
 clean:
 	rm -f target/*
 
-.PHONY: run run-gpu test clean
+.PHONY: run test clean
 

@@ -36,7 +36,7 @@ class Main:
         self.occlusion_cost = ax
 
         ax = fig.add_subplot(gs[2, -1])
-        ax = widgets.Slider(ax, 'darken', 0, 2, valinit=1.0)
+        ax = widgets.Slider(ax, 'lighten', 0, 2, valinit=1.0)
         ax.on_changed(self.corrupt_slider_update)
         self.darken = ax
 
@@ -51,12 +51,12 @@ class Main:
         self.temperature = ax
 
         ax = fig.add_subplot(gs[5, -1])
-        ax = widgets.Slider(ax, 'noise scale', 0, 25, valinit=0)
+        ax = widgets.Slider(ax, 'noise scale', 0, 0.5, valinit=0)
         ax.on_changed(self.corrupt_slider_update)
         self.noise_scale = ax
 
         ax = fig.add_subplot(gs[6, -1])
-        ax = widgets.Button(ax, 'calibrate')
+        ax = widgets.Button(ax, 're-rectify')
         ax.on_clicked(self.calibrate_clicked)
         self.calibrate = ax
 
@@ -102,12 +102,12 @@ class Main:
 
         ax = fig.add_subplot(gs[9:12, 0])
         ax.set_axis_off()
-        ax.set(title='mapped')
+        ax.set(title='mapped dst')
         self.mapped_widget = ax.imshow(np.zeros(shape_src))
 
         ax = fig.add_subplot(gs[9:12, 1])
         ax.set_axis_off()
-        ax.set(title='integrated')
+        ax.set(title='integrated dst')
         self.integrated_widget = ax.imshow(np.zeros(shape_src))
 
         ani = animation.FuncAnimation(fig, self.animate, cache_frame_data=False, blit=True, interval=20)
@@ -148,14 +148,12 @@ class Main:
         coords_src_valid = np.all(coords_src_valid, axis=0)
         coords_src_valid = np.expand_dims(coords_src_valid, 2)
 
-
-#         colors_src = dst
         colors_src = util.img_as_float64(src)
         colors_src = colors_src[tuple(coords_src)]
         colors_src = np.where(coords_src_valid, colors_src, np.nan)
 
         integrated = np.nan_to_num(colors_src, nan=corrected_dst)
-#         integrated = np.nanmean([corrected_dst, colors_src], axis=0)
+        integrated = np.clip(integrated, 0, 1)
 
         self.src_widget.set_data(util.img_as_ubyte(raw_src))
         self.dst_widget.set_data(util.img_as_ubyte(raw_dst))
